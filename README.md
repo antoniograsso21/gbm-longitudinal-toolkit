@@ -29,7 +29,7 @@ At a high level, the toolkit provides:
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-org>/gbm-longitudinal-toolkit.git
+git clone https://github.com/antoniograsso21/gbm-longitudinal-toolkit.git
 cd gbm-longitudinal-toolkit
 
 # (Recommended) create and activate a Python 3.12+ virtual environment
