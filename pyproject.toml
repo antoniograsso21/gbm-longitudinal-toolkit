@@ -3,6 +3,11 @@ name = "gbm-longitudinal-toolkit"
 version = "0.1.0"
 description = "Longitudinal radiomics framework for GBM treatment response prediction"
 requires-python = ">=3.12"
+dependencies = [
+    "pandas==3.0.1",
+    "dvc==3.66.1",
+    "ruff==0.15.5",
+]
 
 [tool.ruff]
 line-length = 88
