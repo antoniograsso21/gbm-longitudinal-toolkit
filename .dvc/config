@@ -1,2 +1,5 @@
 [core]
     autostage = true
+    remote = mylocal
+['remote "mylocal"']
+    url = /home/antoniograsso21/dvc-storage/gbm-longitudinal-toolkit
