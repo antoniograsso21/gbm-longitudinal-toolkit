@@ -1,288 +1,377 @@
 """
-LUMIERE Dataset Audit — Fase 0
-==============================
-Esplora i quattro CSV del dataset LUMIERE seguendo le EDA Guidelines
-definite in CONTEXT.md:
+LUMIERE Dataset Audit — Phase 0
+================================
+Explores the four LUMIERE CSVs following the EDA Guidelines in CONTEXT.md.
 
-REGOLA FONDAMENTALE: l'unità di analisi è il PAZIENTE, non lo scan.
-Ogni statistica viene calcolata prima per paziente, poi aggregata.
+FUNDAMENTAL RULE: the unit of analysis is always the PATIENT, not the scan.
+Every statistic is computed first per patient, then aggregated.
 
-Posizione nel repo: src/audit/lumiere_audit.py
-Esecuzione: python -m src.audit.lumiere_audit (dalla root del progetto)
+Usage:
+    python -m src.audit.lumiere_audit
 """
 
 import json
+import re
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# Configurazione
+# Configuration
 # ---------------------------------------------------------------------------
 DATA_DIR = Path("data/raw/lumiere")
 OUTPUT_DIR = Path("data/processed")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Classi RANO da escludere (non valutazioni cliniche standard)
-RANO_EXCLUDE = {"Pre-Op", "Post-Op", "Post-Op ", "Post-Op/PD"}
+RANO_EXCLUDE: frozenset[str] = frozenset({"Pre-Op", "Post-Op", "Post-Op ", "Post-Op/PD"})
 
-# Mapping classi RANO → 3 classi
-RANO_MAPPING = {
+RANO_MAPPING: dict[str, str] = {
     "CR": "Response",
     "PR": "Response",
     "SD": "Stable",
     "PD": "Progressive",
 }
 
+# String values treated as NaN when loading CSVs
+NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "nan", "NaN", ""]
 
-# ---------------------------------------------------------------------------
-# Step 1 — Audit grezzo: struttura di ogni CSV
-# ---------------------------------------------------------------------------
-def audit_raw_files() -> None:
-    """Stampa struttura, shape, colonne e missing values di ogni CSV."""
-    csv_files = list(DATA_DIR.glob("*.csv"))
-
-    if not csv_files:
-        print(f"❌ Nessun CSV trovato in {DATA_DIR}")
-        print("Copia i file in data/raw/lumiere/ prima di procedere.")
-        return
-
-    print(f"📂 File trovati: {[f.name for f in csv_files]}\n")
-
-    for filepath in sorted(csv_files):
-        print(f"\n{'='*60}")
-        print(f"📄 {filepath.name}")
-        print(f"{'='*60}")
-
-        df = pd.read_csv(filepath)
-        print(f"Shape: {df.shape[0]} righe × {df.shape[1]} colonne")
-        print(f"\nColonne:\n{df.columns.tolist()}")
-        print(f"\nPrime 3 righe:\n{df.head(3).to_string()}")
-
-        # Missing values
-        null_pct = (df.isnull().sum() / len(df) * 100).round(1)
-        nulli = null_pct[null_pct > 0]
-        if not nulli.empty:
-            print(f"\n⚠️  Missing values (% per colonna):\n{nulli.to_string()}")
-        else:
-            print("\n✅ Nessun missing value")
+SECTION = "=" * 60
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Audit RANO: distribuzione classi PER PAZIENTE
+# Result dataclasses — typed, serialisable, testable
 # ---------------------------------------------------------------------------
-def audit_rano() -> pd.DataFrame:
-    """
-    Analizza le label RANO seguendo la regola per-paziente.
-    Restituisce il DataFrame filtrato e mappato.
-    """
-    print(f"\n{'='*60}")
-    print("📊 AUDIT RANO — per paziente")
-    print(f"{'='*60}")
+@dataclass
+class RanoStats:
+    total_timepoints: int
+    valid_timepoints: int
+    n_patients: int
+    timepoints_per_patient: dict[str, float]  # describe() output
+    class_distribution_per_scan: dict[str, int]
+    class_distribution_per_patient: dict[str, int]
+    dominant_patients: dict[str, int]  # top 5 by scan count
 
-    rano = pd.read_csv(DATA_DIR / "LUMIERE-ExpertRating-v202211.csv")
-    rano.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
 
-    print(f"Timepoint totali nel file: {len(rano)}")
-    print(f"Distribuzione Rating (raw):\n{rano['Rating'].value_counts().to_string()}")
+@dataclass
+class TemporalStats:
+    delta_weeks_summary: dict[str, float]  # describe() output
+    mean_delta_by_class: dict[str, float]
+    n_zero_delta: int
 
-    # Filtra timepoint non validi
-    rano_valid = rano[~rano["Rating"].isin(RANO_EXCLUDE)].copy()
-    rano_valid["Rating_grouped"] = rano_valid["Rating"].map(RANO_MAPPING)
 
-    print(f"\n✅ Timepoint validi dopo esclusione Pre/Post-Op: {len(rano_valid)}")
-    print(f"✅ Pazienti con almeno 1 timepoint valido: {rano_valid['Patient'].nunique()}")
+@dataclass
+class RadiomicStats:
+    shape: tuple[int, int]
+    n_missing_features: int
+    n_high_skew_features: int
+    top_skew: dict[str, float]
 
-    # --- PER PAZIENTE: distribuzione timepoint ---
-    tp_per_patient = rano_valid.groupby("Patient")["Date"].count()
-    print(f"\n📊 Timepoint validi per paziente (statistica per paziente):")
-    print(tp_per_patient.describe().round(1).to_string())
 
-    for threshold in [2, 3, 4, 5]:
-        n = (tp_per_patient >= threshold).sum()
-        print(f"  Pazienti con >= {threshold} timepoint: {n}")
-
-    # --- PER PAZIENTE: distribuzione classi ---
-    # Conta quanti pazienti hanno almeno 1 occorrenza di ogni classe
-    print(f"\n📊 Distribuzione classi RANO (per timepoint — grezzo):")
-    print(rano_valid["Rating_grouped"].value_counts().to_string())
-
-    print(f"\n📊 Distribuzione classi RANO (per paziente — quanti pazienti hanno almeno 1):")
-    for classe in ["Progressive", "Stable", "Response"]:
-        pazienti_con_classe = rano_valid[rano_valid["Rating_grouped"] == classe]["Patient"].nunique()
-        print(f"  {classe}: {pazienti_con_classe} pazienti")
-
-    # Pazienti dominanti (alto numero di scan)
-    print(f"\n⚠️  Top 5 pazienti per numero di timepoint (rischio dominanza):")
-    print(tp_per_patient.sort_values(ascending=False).head(5).to_string())
-
-    return rano_valid
+@dataclass
+class AuditResult:
+    n_effective: int
+    n_patients: int
+    class_distribution: dict[str, int]
+    rano: RanoStats
+    temporal: TemporalStats
+    radiomic: RadiomicStats
 
 
 # ---------------------------------------------------------------------------
-# Utility — parse settimane dal formato "week-044" o "week-000-1"
+# Utilities
 # ---------------------------------------------------------------------------
+def _section(title: str) -> None:
+    print(f"\n{SECTION}\n{title}\n{SECTION}")
+
+
+def _load_csv(filename: str) -> pd.DataFrame:
+    """Load a LUMIERE CSV treating common NA strings as NaN."""
+    return pd.read_csv(DATA_DIR / filename, na_values=NA_VALUES, keep_default_na=True)
+
+
 def parse_week(date_str: str) -> float:
     """
-    Converte stringhe tipo 'week-044' o 'week-000-1' in un numero float
-    ordinale di settimane. Il suffisso '-1', '-2' indica scan multipli
-    nella stessa settimana — viene trattato come offset di 0.1, 0.2 ecc.
-    Esempi:
+    Parse LUMIERE week strings into a float ordinal.
+
+    Examples:
         'week-044'   → 44.0
-        'week-000-1' → 0.1
-        'week-000-2' → 0.2
+        'week-000-1' → 0.1   (first pre-op scan)
+        'week-000-2' → 0.2   (second pre-op scan)
+
+    Raises:
+        ValueError: if the string does not match the expected format.
     """
-    import re
-    parts = date_str.replace("week-", "").split("-")
-    week = float(parts[0])
-    if len(parts) > 1:
-        week += float(parts[1]) * 0.1
+    m = re.match(r"week-(\d+)(?:-(\d+))?$", date_str)
+    if not m:
+        raise ValueError(f"Unexpected date format: '{date_str}'")
+    week = float(m.group(1))
+    if m.group(2):
+        week += float(m.group(2)) * 0.1
     return week
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — Audit intervalli temporali (clinical workflow leakage check)
-# ---------------------------------------------------------------------------
-def audit_temporal_intervals(rano_valid: pd.DataFrame) -> None:
-    """
-    Analizza gli intervalli Δt tra scan consecutivi per paziente.
-    Questo è il primo controllo per il clinical workflow leakage.
-    Le date sono nel formato 'week-NNN' — vengono convertite in settimane numeriche.
-    """
-    print(f"\n{'='*60}")
-    print("⏱️  AUDIT INTERVALLI TEMPORALI — clinical workflow leakage check")
-    print(f"{'='*60}")
+def _add_week_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of df with a 'week_num' column parsed from 'Date'."""
+    df = df.copy()
+    df["week_num"] = df["Date"].apply(parse_week)
+    return df.sort_values(["Patient", "week_num"])
 
-    rano_valid = rano_valid.copy()
-    rano_valid["week_num"] = rano_valid["Date"].apply(parse_week)
-    rano_valid = rano_valid.sort_values(["Patient", "week_num"])
 
-    # Calcola Δt in settimane per ogni coppia consecutiva
-    delta_records = []
-    for patient, group in rano_valid.groupby("Patient"):
-        weeks = group["week_num"].values
-        ratings = group["Rating_grouped"].values
-        for i in range(len(weeks) - 1):
-            delta_weeks = weeks[i + 1] - weeks[i]
-            delta_records.append({
+def _compute_consecutive_pairs(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    For each patient build consecutive (t, t+1) pairs.
+    Returns a DataFrame with columns:
+        patient, week_t, week_t1, delta_weeks, rating_t, rating_t1, label_t1
+    Raises:
+        ValueError: if any delta_weeks < 0 (ordering inconsistency).
+    """
+    records = []
+    for patient, group in df.groupby("Patient"):
+        rows = group.reset_index(drop=True)
+        for i in range(len(rows) - 1):
+            delta = rows.loc[i + 1, "week_num"] - rows.loc[i, "week_num"]
+            if delta < 0:
+                raise ValueError(
+                    f"Negative Δt ({delta}) for patient {patient} "
+                    f"between week {rows.loc[i, 'week_num']} "
+                    f"and {rows.loc[i + 1, 'week_num']}."
+                )
+            records.append({
                 "patient": patient,
-                "delta_weeks": delta_weeks,
-                "rating_t": ratings[i],
-                "rating_t1": ratings[i + 1],
+                "week_t": rows.loc[i, "week_num"],
+                "week_t1": rows.loc[i + 1, "week_num"],
+                "delta_weeks": delta,
+                "rating_t": rows.loc[i, "Rating_grouped"],
+                "label_t1": rows.loc[i + 1, "Rating_grouped"],
             })
+    return pd.DataFrame(records)
 
-    delta_df = pd.DataFrame(delta_records)
 
-    print(f"\n📊 Distribuzione Δt in settimane (per coppia consecutiva):")
-    print(delta_df["delta_weeks"].describe().round(1).to_string())
+# ---------------------------------------------------------------------------
+# Step 1 — Raw file overview
+# ---------------------------------------------------------------------------
+def audit_raw_files() -> None:
+    """Print shape, columns, head, and missing values for every CSV."""
+    csv_files = sorted(DATA_DIR.glob("*.csv"))
+    if not csv_files:
+        print(f"❌ No CSV found in {DATA_DIR}. Copy files before running.")
+        return
 
-    print(f"\n📊 Δt medio per classe RANO al timepoint T+1 (segnale leakage):")
-    print(delta_df.groupby("rating_t1")["delta_weeks"].mean().round(1).to_string())
+    print(f"📂 Files found: {[f.name for f in csv_files]}")
+
+    for filepath in csv_files:
+        _section(f"📄 {filepath.name}")
+        df = _load_csv(filepath.name)
+        print(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+        print(f"\nColumns:\n{df.columns.tolist()}")
+        print(f"\nFirst 3 rows:\n{df.head(3).to_string()}")
+
+        null_pct = (df.isnull().sum() / len(df) * 100).round(1)
+        missing = null_pct[null_pct > 0]
+        if missing.empty:
+            print("\n✅ No missing values")
+        else:
+            print(f"\n⚠️  Missing values (% per column):\n{missing.to_string()}")
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — RANO labels audit (per-patient)
+# ---------------------------------------------------------------------------
+def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
+    """
+    Analyse RANO labels following the per-patient EDA rule.
+
+    Returns:
+        rano_valid: filtered and mapped DataFrame
+        stats: RanoStats dataclass
+    """
+    _section("📊 RANO AUDIT — per patient")
+
+    rano = _load_csv("LUMIERE-ExpertRating-v202211.csv")
+    rano.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
+
+    print(f"Total timepoints in file: {len(rano)}")
+    print(f"Raw rating distribution:\n{rano['Rating'].value_counts().to_string()}")
+
+    rano_valid = rano[~rano["Rating"].isin(RANO_EXCLUDE)].copy()
+    rano_valid["Rating_grouped"] = rano_valid["Rating"].map(RANO_MAPPING)
+
+    print(f"\n✅ Valid timepoints after Pre/Post-Op exclusion: {len(rano_valid)}")
+    print(f"✅ Patients with ≥1 valid timepoint: {rano_valid['Patient'].nunique()}")
+
+    tp_per_patient = rano_valid.groupby("Patient")["Date"].count()
+    describe = tp_per_patient.describe().round(1)
+    print(f"\n📊 Valid timepoints per patient:\n{describe.to_string()}")
+
+    for threshold in [2, 3, 4, 5]:
+        print(f"  Patients with ≥{threshold} timepoints: {(tp_per_patient >= threshold).sum()}")
+
+    per_scan = rano_valid["Rating_grouped"].value_counts().to_dict()
+    print(f"\n📊 Class distribution (per scan — raw):\n{pd.Series(per_scan).to_string()}")
+
+    per_patient = {
+        cls: int(rano_valid[rano_valid["Rating_grouped"] == cls]["Patient"].nunique())
+        for cls in ["Progressive", "Stable", "Response"]
+    }
+    print(f"\n📊 Class distribution (per patient — ≥1 occurrence):")
+    for cls, n in per_patient.items():
+        print(f"  {cls}: {n} patients")
+
+    top5 = tp_per_patient.sort_values(ascending=False).head(5)
+    print(f"\n⚠️  Top 5 patients by scan count (dominance risk):\n{top5.to_string()}")
+
+    stats = RanoStats(
+        total_timepoints=len(rano),
+        valid_timepoints=len(rano_valid),
+        n_patients=int(rano_valid["Patient"].nunique()),
+        timepoints_per_patient=describe.to_dict(),
+        class_distribution_per_scan={k: int(v) for k, v in per_scan.items()},
+        class_distribution_per_patient=per_patient,
+        dominant_patients=top5.to_dict(),
+    )
+    return rano_valid, stats
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Temporal intervals (clinical workflow leakage check)
+# ---------------------------------------------------------------------------
+def audit_temporal_intervals(rano_valid: pd.DataFrame) -> TemporalStats:
+    """
+    Analyse Δt between consecutive scans per patient.
+    Key check: if Progressive has a much lower mean Δt → leakage risk.
+    """
+    _section("⏱️  TEMPORAL INTERVALS — clinical workflow leakage check")
+
+    df = _add_week_column(rano_valid)
+    pairs = _compute_consecutive_pairs(df)
+
+    summary = pairs["delta_weeks"].describe().round(1)
+    print(f"\n📊 Δt distribution (weeks):\n{summary.to_string()}")
+
+    mean_by_class = pairs.groupby("label_t1")["delta_weeks"].mean().round(1)
+    print(f"\n📊 Mean Δt by RANO class at T+1 (leakage signal):\n{mean_by_class.to_string()}")
     print(
-        "\n⚠️  Se Progressive ha Δt significativamente più basso degli altri → "
-        "clinical workflow leakage attivo. Da dichiarare nel paper."
+        "\n⚠️  If Progressive has a significantly lower Δt → "
+        "clinical workflow leakage confirmed. Must be declared in the paper."
+    )
+
+    n_zero = int((pairs["delta_weeks"] == 0).sum())
+    if n_zero > 0:
+        print(f"\n⚠️  {n_zero} pairs with Δt=0 (same-week scans). Investigate before preprocessing.")
+
+    return TemporalStats(
+        delta_weeks_summary=summary.to_dict(),
+        mean_delta_by_class=mean_by_class.to_dict(),
+        n_zero_delta=n_zero,
     )
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Audit feature radiomiche: missing values e completezza
+# Step 4 — Radiomic features audit
 # ---------------------------------------------------------------------------
-def audit_radiomic_features() -> None:
+def audit_radiomic_features() -> RadiomicStats:
     """
-    Analizza il CSV delle feature PyRadiomics:
-    completezza per scan e distribuzione missing per feature.
+    Analyse the PyRadiomics CSV: missing values and skewness.
+    Skewness is computed only on 'original_*' columns (true radiomic features).
     """
-    print(f"\n{'='*60}")
-    print("🔬 AUDIT FEATURE RADIOMICHE")
-    print(f"{'='*60}")
+    _section("🔬 RADIOMIC FEATURES AUDIT")
 
-    feat = pd.read_csv(DATA_DIR / "LUMIERE-pyradiomics-hdglioauto-features.csv")
+    feat = _load_csv("LUMIERE-pyradiomics-hdglioauto-features.csv")
     print(f"Shape: {feat.shape}")
-    print(f"\nPrime colonne: {feat.columns[:10].tolist()}")
 
-    # Missing values per feature
+    # Missing values (all columns)
     null_pct = (feat.isnull().sum() / len(feat) * 100).round(1)
-    nulli = null_pct[null_pct > 0]
-    print(f"\n⚠️  Feature con missing values: {len(nulli)}")
-    if not nulli.empty:
-        print(nulli.sort_values(ascending=False).head(20).to_string())
+    missing = null_pct[null_pct > 0]
+    print(f"\n⚠️  Columns with missing values: {len(missing)}")
+    if not missing.empty:
+        print(missing.sort_values(ascending=False).head(20).to_string())
 
-    # Distribuzione valori per feature (skewness)
-    numeric_cols = feat.select_dtypes(include="number").columns
-    skewness = feat[numeric_cols].skew().abs()
-    high_skew = skewness[skewness > 2]
-    print(f"\n⚠️  Feature con skewness > 2 (candidate a log-transform): {len(high_skew)}")
+    # Skewness — only true radiomic features
+    radiomic_cols = [c for c in feat.columns if c.startswith("original_")]
+    skewness = feat[radiomic_cols].skew().abs()
+    high_skew = skewness[skewness > 2].sort_values(ascending=False)
+    print(f"\n⚠️  Radiomic features with skewness > 2 (log-transform candidates): {len(high_skew)}")
     if not high_skew.empty:
-        print(high_skew.sort_values(ascending=False).head(10).to_string())
+        print(high_skew.head(10).to_string())
+
+    # Structure insight
+    n_sequences = feat["Sequence"].nunique() if "Sequence" in feat.columns else "?"
+    n_regions = feat["Label name"].nunique() if "Label name" in feat.columns else "?"
+    print(f"\n📊 Sequences: {n_sequences} | Regions: {n_regions}")
+    print(f"   → Each scan generates {n_sequences}×{n_regions} rows in this CSV")
+    print(f"   → Effective scans ≈ {len(feat) // (n_sequences * n_regions)}")
+
+    return RadiomicStats(
+        shape=feat.shape,
+        n_missing_features=int(len(missing)),
+        n_high_skew_features=int(len(high_skew)),
+        top_skew=high_skew.head(10).round(2).to_dict(),
+    )
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Calcolo n_effettiva (paired examples dopo label shift)
+# Step 5 — Effective sample size (paired examples after label shift)
 # ---------------------------------------------------------------------------
-def compute_n_effettiva(rano_valid: pd.DataFrame) -> dict:
+def compute_n_effective(rano_valid: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """
-    Calcola quanti esempi paired (features_t, label_t+1) esistono
-    dopo il label shift. Questa è la vera sample size del progetto.
+    Compute n_effective: paired (features_t, label_t+1) examples after label shift.
+    This is the true sample size of the project.
+
+    Returns:
+        paired_df: DataFrame with all paired examples
+        stats: dict with n_effective, n_patients, class distribution
     """
-    print(f"\n{'='*60}")
-    print("🎯 N_EFFETTIVA — paired examples dopo label shift")
-    print(f"{'='*60}")
+    _section("🎯 N_EFFECTIVE — paired examples after label shift")
 
-    rano_valid = rano_valid.copy()
-    rano_valid["week_num"] = rano_valid["Date"].apply(parse_week)
-    rano_valid = rano_valid.sort_values(["Patient", "week_num"])
+    df = _add_week_column(rano_valid)
+    paired_df = _compute_consecutive_pairs(df)
 
-    paired = []
-    for patient, group in rano_valid.groupby("Patient"):
-        rows = group.reset_index(drop=True)
-        for i in range(len(rows) - 1):  # escludi sempre l'ultimo
-            paired.append({
-                "patient": patient,
-                "week_t": rows.loc[i, "week_num"],
-                "week_t1": rows.loc[i + 1, "week_num"],
-                "delta_weeks": rows.loc[i + 1, "week_num"] - rows.loc[i, "week_num"],
-                "label_t1": rows.loc[i + 1, "Rating_grouped"],
-            })
+    n_effective = len(paired_df)
+    n_patients = paired_df["patient"].nunique()
+    class_dist = paired_df["label_t1"].value_counts().to_dict()
 
-    paired_df = pd.DataFrame(paired)
-    n_effettiva = len(paired_df)
-    n_pazienti = paired_df["patient"].nunique()
+    print(f"\n✅ n_effective (total paired examples): {n_effective}")
+    print(f"✅ Patients represented: {n_patients}")
+    print(f"\n📊 Class distribution (label_t+1):\n{pd.Series(class_dist).to_string()}")
 
-    print(f"\n✅ n_effettiva (paired examples totali): {n_effettiva}")
-    print(f"✅ Pazienti rappresentati: {n_pazienti}")
-    print(f"\n📊 Distribuzione per classe target (label_t+1):")
-    print(paired_df["label_t1"].value_counts().to_string())
-
-    stats = {
-        "n_effettiva": n_effettiva,
-        "n_pazienti": n_pazienti,
-        "distribuzione_classi": paired_df["label_t1"].value_counts().to_dict(),
-    }
-
-    # Salva stats in JSON per riferimento futuro
-    stats_path = OUTPUT_DIR / "dataset_stats.json"
-    with open(stats_path, "w") as f:
-        json.dump(stats, f, indent=2)
-    print(f"\n💾 Stats salvate in {stats_path}")
-
-    return stats
+    return paired_df, {"n_effective": n_effective, "n_patients": n_patients, "class_distribution": class_dist}
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
+def main() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
     print("🧠 GBM Longitudinal Toolkit — LUMIERE Audit")
-    print("=" * 60)
+    print(SECTION)
 
     audit_raw_files()
-    rano_valid = audit_rano()
-    audit_temporal_intervals(rano_valid)
-    audit_radiomic_features()
-    stats = compute_n_effettiva(rano_valid)
+    rano_valid, rano_stats = audit_rano()
+    temporal_stats = audit_temporal_intervals(rano_valid)
+    radiomic_stats = audit_radiomic_features()
+    paired_df, paired_stats = compute_n_effective(rano_valid)
 
-    print(f"\n{'='*60}")
-    print("✅ AUDIT COMPLETATO")
-    print(f"   n_effettiva = {stats['n_effettiva']} paired examples")
-    print(f"   Pazienti = {stats['n_pazienti']}")
-    print("=" * 60)
+    result = AuditResult(
+        n_effective=paired_stats["n_effective"],
+        n_patients=paired_stats["n_patients"],
+        class_distribution=paired_stats["class_distribution"],
+        rano=rano_stats,
+        temporal=temporal_stats,
+        radiomic=radiomic_stats,
+    )
+
+    stats_path = OUTPUT_DIR / "dataset_stats.json"
+    with open(stats_path, "w") as f:
+        json.dump(asdict(result), f, indent=2)
+
+    print(f"\n{SECTION}")
+    print("✅ AUDIT COMPLETE")
+    print(f"   n_effective = {result.n_effective} paired examples")
+    print(f"   Patients    = {result.n_patients}")
+    print(f"   Saved stats → {stats_path}")
+    print(SECTION)
+
+
+if __name__ == "__main__":
+    main()
