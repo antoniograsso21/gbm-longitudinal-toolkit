@@ -217,11 +217,14 @@ What to test:
 - [x] dataset_stats.json saved: n_effective=318, 68 patients, 72%/14%/14%
 - [x] Demographics missing values correctly detected (na_values fix)
 - [x] Skewness corrected to 62 features on original_* only
-- [x] Δt=0 pair investigated: Patient-042, week-010-1 (Stable) and week-010-2
-      (Progressive) — two clinical visits in the same week. Decision: drop
-      week-010-1 in preprocessing (keep the later assessment). Document in paper
-      Methods: "One scan with Δt=0 (Patient-042, week 10) removed prior to
-      preprocessing." n_effective may decrease by 1 after this removal.
+- [x] Δt=0 pair investigated: Patient-042 has two identical rows for week-010
+      in the raw RANO CSV (SD and PD) — a duplicate entry in the source data,
+      not a week-010-1/2 format issue. Decision: drop the first occurrence (SD)
+      in preprocessing, keep the second (PD) as the authoritative assessment.
+      A deduplication check for (Patient, Date) duplicates has been added to
+      the audit script to catch any similar cases. Document in paper Methods:
+      "One duplicate timepoint (Patient-042, week 10) was resolved by retaining
+      the later assessment (PD)."
 
 **Preprocessing (Step 0.2)**
 - [ ] Δt=0 pair resolved before build_dataset.py is written

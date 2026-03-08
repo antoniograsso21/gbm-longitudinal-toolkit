@@ -109,3 +109,23 @@ integrated into a radiology workflow.
 **Prerequisite**: V1 published and externally validated first.
 
 ---
+
+---
+
+## 6. Local SQLite Database for Data Exploration
+
+**Idea**: load all LUMIERE CSVs into a local SQLite database to enable
+declarative SQL queries during EDA and preprocessing development.
+
+**Why it was deferred**: on n=318 examples, Pandas handles all joins,
+filters, and aggregations in memory in milliseconds. The added complexity
+of a database connection, schema definition, and migration management
+outweighs any benefit at this scale.
+
+**When it would make sense**:
+- Dataset grows significantly (multi-institutional, n > 10,000)
+- A REST API (FastAPI) needs to serve predictions and query results
+- Multiple researchers need concurrent read access to processed data
+
+**Reference**: FastAPI + SQLite is a standard lightweight pattern for
+serving ML results without a full database infrastructure.

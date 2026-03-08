@@ -46,10 +46,11 @@ class RanoStats:
     total_timepoints: int
     valid_timepoints: int
     n_patients: int
-    timepoints_per_patient: dict[str, float]  # describe() output
+    timepoints_per_patient: dict[str, float]
     class_distribution_per_scan: dict[str, int]
     class_distribution_per_patient: dict[str, int]
-    dominant_patients: dict[str, int]  # top 5 by scan count
+    dominant_patients: dict[str, int]
+    n_duplicate_timepoints: int  # (Patient, Date) duplicates in raw RANO file
 
 
 @dataclass
@@ -220,6 +221,14 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     top5 = tp_per_patient.sort_values(ascending=False).head(5)
     print(f"\n⚠️  Top 5 patients by scan count (dominance risk):\n{top5.to_string()}")
 
+    # Duplicate (Patient, Date) check — catches raw data anomalies like Patient-042 week-010
+    duplicates = rano_valid[rano_valid.duplicated(subset=["Patient", "Date"], keep=False)]
+    if not duplicates.empty:
+        print(f"\n⚠️  Duplicate (Patient, Date) entries found — must be resolved before preprocessing:")
+        print(duplicates[["Patient", "Date", "Rating_grouped"]].to_string())
+    else:
+        print("\n✅ No duplicate (Patient, Date) entries")
+
     stats = RanoStats(
         total_timepoints=len(rano),
         valid_timepoints=len(rano_valid),
@@ -228,6 +237,7 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
         class_distribution_per_scan={k: int(v) for k, v in per_scan.items()},
         class_distribution_per_patient=per_patient,
         dominant_patients=top5.to_dict(),
+        n_duplicate_timepoints=int(rano_valid.duplicated(subset=["Patient", "Date"]).sum()),
     )
     return rano_valid, stats
 
