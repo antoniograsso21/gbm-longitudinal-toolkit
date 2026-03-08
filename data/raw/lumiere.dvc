@@ -1,0 +1,6 @@
+outs:
+- md5: 272f9fe6de95946b7f62ec784105c77c.dir
+  size: 35366894
+  nfiles: 5
+  hash: md5
+  path: lumiere

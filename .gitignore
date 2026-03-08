@@ -1,7 +1,11 @@
-# Data — mai su git, gestita da DVC
-data/raw/
-data/processed/
-*.dvc/cache
+# Ignora tutto dentro data/raw e data/processed, gestita da DVC
+data/raw/*
+data/processed/*
+
+# MA permetti a Git di vedere i file .dvc (i file di controllo)
+!data/raw/*.dvc
+!data/processed/*.dvc
+.dvc/cache
 
 # Python
 __pycache__/
