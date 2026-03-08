@@ -1,0 +1,10 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "CI not yet configured"
