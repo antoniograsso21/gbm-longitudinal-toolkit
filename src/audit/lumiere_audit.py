@@ -32,7 +32,7 @@ RANO_MAPPING: dict[str, str] = {
     "PD": "Progressive",
 }
 
-NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "nan", "NaN", ""]
+NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "nan", "NaN", "N-A", ""]
 
 # Threshold for DeepBraTumIA viability as primary segmentation source.
 # Derived from: patients with >=3 valid RANO timepoints in the HD-GLIO-AUTO
