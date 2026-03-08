@@ -5,6 +5,19 @@ Open-source framework for longitudinal analysis of glioblastoma (GBM).
 Demonstrative case study: automatic RANO treatment response prediction on the LUMIERE dataset.
 Target: preprint on bioRxiv + public GitHub repository.
 
+## How to Navigate This Repository
+Each phase has a dedicated plan file with operational detail:
+- `docs/PHASE_0.md` — Data Foundation (audit + preprocessing + validation)
+- `docs/PHASE_1.md` — Graph Construction
+- `docs/PHASE_2.md` — Baseline Models
+- `docs/PHASE_3.md` — Temporal GNN
+- `docs/PHASE_4.md` — Uncertainty Quantification
+- `docs/PHASE_5.md` — Framework + Paper
+
+This file (CONTEXT.md) is the strategic document. Phase files are the tactical ones.
+
+---
+
 ## Dataset — LUMIERE
 - 91 GBM patients, Swiss dataset, open access (Figshare, non-commercial license)
 - 638 study dates, 2487 MRI images
@@ -22,8 +35,17 @@ Target: preprint on bioRxiv + public GitHub repository.
 - Full MRI volumes available on Figshare alongside the CSV files
 - Sequences: CT1, T1, T2, FLAIR (skull-stripped, co-registered, NIfTI format)
 - Currently unused — radiomic features already extracted via PyRadiomics are sufficient for V1
-- Raw MRI will be relevant for future work (see FUTURE.md): direct deep learning on images,
-  peritumoral edema segmentation, visual QC of HD-GLIO-AUTO segmentations
+- Raw MRI relevant for future work (see FUTURE.md)
+
+### Phase 0 Audit Results (completed)
+- n_effective = 318 paired examples after label shift
+- Patients represented = 68
+- Class distribution: Progressive=229 (72%), Stable=45 (14%), Response=44 (14%)
+- Clinical workflow leakage: Δt Progressive=13.3w, Stable=13.1w, Response=16.0w → low risk
+- Missing values: 14.9% uniform across all radiomic features (entire scans missing)
+- High-skew features: 68 radiomic features with skewness > 2 → log-transform candidates
+
+---
 
 ## ⚠️ Critical Dataset Properties — Read Before Touching the Data
 
@@ -33,8 +55,7 @@ explicit pairs (features_t, label_t+1). Direct consequences:
 
 - A timepoint T is a valid example ONLY IF T+1 exists with an available RANO label
 - The last timepoint of each patient is NEVER a training/test example
-- n_effective (paired examples) is LOWER than 399 — compute it in Phase 0,
-  log it, declare it in the paper. It is the variable that determines feasibility.
+- n_effective (paired examples) is LOWER than 399 — already computed: 318
 
 ```python
 # Mandatory schema — never deviate
@@ -43,62 +64,51 @@ for patient in patients_with_3plus_timepoints:
     for t in patient.timepoints[:-1]:
         if t has features AND t+1 has RANO label:
             paired_examples.append((features_t, label_t+1))
-# len(paired_examples) = n_effective
 ```
 
 ### 2. Clinical Workflow Leakage (subtle, often ignored in literature)
 LUMIERE is irregularly longitudinal: scan intervals are not fixed but determined
 by clinical decisions correlated with the target.
 
-Bias mechanism:
-- Suspected progression → more frequent scans
-- Stable patient → more distant follow-ups
-- Consequence: Δt is implicitly correlated with RANO(t+1)
-- The model may learn "short interval → PD" without using radiomic features
-
 Three mandatory controls (to be executed and reported in the paper):
   a) Ablation study: model trained on Δt only, no radiomics.
-     If performance > random → leakage confirmed, must be declared.
-  b) Feature importance of Δt in the final model — if dominant, suspicious.
-  c) Temporal binning as sanity check:
-     early (0-8 weeks) / mid (8-20 weeks) / late (>20 weeks)
+  b) Feature importance of Δt in the final model.
+  c) Temporal binning: early (0-8w) / mid (8-20w) / late (>20w)
 
 ### 3. Temporal class imbalance (beyond standard class imbalance)
 Patients responding to therapy tend to have fewer scans and more distant follow-ups.
-The dataset is imbalanced not only in classes (PD=63%) but also in the temporal
-distribution per class. To be declared explicitly in the Limitations section.
+To be declared explicitly in the Limitations section.
+
+---
 
 ## Available Files in data/raw/lumiere/
 - LUMIERE-pyradiomics-hdglioauto-features.csv (4792 rows, 152 columns)
+  Structure: 1 row per (patient × timepoint × sequence × region)
+  → Must be pivoted to 1 row per (patient × timepoint) in preprocessing
 - LUMIERE-ExpertRating-v202211.csv (616 rows — RANO labels)
 - LUMIERE-Demographics_Pathology.csv (91 rows — clinical data)
 - LUMIERE-datacompleteness.csv (638 rows — sequence availability per timepoint)
 
+---
+
 ## Predictive Task
 Formulation A: given the scan history t1...tN, predict the next RANO state at tN+1.
-This is the most clinically useful formulation — it answers the real clinical question.
 Note: many radiomics papers use features(t) → label(t), which is clinically useless.
 This project uses features(t1..tN) → label(tN+1), which is the correct formulation.
+
+---
 
 ## EDA Guidelines — Mandatory Rules for notebooks/
 The unit of analysis in EDA is always the PATIENT, not the scan.
 
-**Why**: LUMIERE has an imbalanced scan distribution per patient
-(min=1, max=16, mean=4.9). A patient with 12 scans weights 4-6x more than others.
-Per-scan statistics produce misleading results: small p-values and apparently strong
-visual separations that actually reflect 3-4 dominant patients, not a population pattern.
-
 Operational rules:
-1. Every descriptive statistic (mean, std, distribution) must be computed
-   first per patient (e.g., mean(Δf) per patient), then aggregated.
-2. Every RANO class separation plot must be verified at two levels:
-   - per-scan (to see the raw pattern)
-   - per-patient (to verify how many patients actually show it)
-3. The signal is real when: many patients show the same trend with varying intensity.
-   Not when a few observations are very separated.
+1. Every descriptive statistic must be computed first per patient, then aggregated.
+2. Every RANO class separation plot must be verified at two levels: per-scan and per-patient.
+3. The signal is real when many patients show the same trend with varying intensity.
 4. n_effective in EDA reports = number of patients, not number of scans.
-5. Always compute and report: scans per patient (min/max/mean/std)
-   and RANO class distribution per patient (not per timepoint).
+5. Always compute and report: scans per patient (min/max/mean/std).
+
+---
 
 ## Architecture
 ```
@@ -121,6 +131,8 @@ Phase 4 — Uncertainty: Conformal Prediction (distribution-free)
 Output: RANO class + prediction set with calibrated confidence
 ```
 
+---
+
 ## Critical Technical Decisions
 1. Z-score normalization ONLY on training data of each fold (never fit on entire dataset)
 2. StratifiedGroupKFold — group=patient, stratum=RANO class — never mix scans of same patient
@@ -128,48 +140,39 @@ Output: RANO class + prediction set with calibrated confidence
 4. Delta-graph normalized by temporal interval: delta_feature / delta_weeks
 5. Metrics: macro F1, MCC, AUC per class — NEVER accuracy (imbalanced classes)
 6. 2-node graph — limitation to declare explicitly in the paper.
-   With 2 nodes and 1 edge the graph is nearly equivalent to a feature vector. The value
-   of the GNN lies in the temporal inductive bias, not topological complexity.
    Real architecture: node features → temporal dynamics → prediction
    i.e. temporal GNN ≈ LSTM + graph inductive bias. Fully defensible.
 7. Feature selection — Phase 1 (Roadmap Phase 0-1): mRMR + Stability Selection
-   - Algorithm: Minimum Redundancy Maximum Relevance
    - Formula: max I(xi; y) - (1/|S|) * sum I(xi; xj∈S)
-   - Rationale: sample-efficient feature selection in p>>n regime (p≈428, n≈55).
    - MI estimation: Kraskov estimator (standard for continuous variables, small n)
-   - Mandatory Stability Selection: repeat mRMR on bootstrap replicates,
-     keep only features with P(xi ∈ S) > τ (τ=0.7 as default).
-     Without this, on n=55 different features may be selected at each fold.
+   - Stability Selection: keep only features with P(xi ∈ S) > τ=0.7 on bootstrap
 8. Feature selection — Phase 2 (Roadmap Phase 3-4): Temporal MI Stability
-   - Criterion: consistency of ranking — not absolute stability of I(xi^t; y^t).
-     Low Var_t[rank(I(xi^t; y^t))] = informationally robust feature.
-   - Biological correction: absolute stability is biologically incorrect.
-     Example: texture heterogeneity may become predictive AFTER therapy.
-   - Implementation: temporal binning (baseline/early/late treatment) to
-     stabilize estimation on small n.
-   - Original contribution: I(xi^t; y^t) ≠ I(xi^t'; y^t') and selecting features
-     with consistent MI ranking is biologically and mathematically motivated.
+   - Criterion: consistency of ranking — Low Var_t[rank(I(xi^t; y^t))]
+   - Implementation: temporal binning (baseline/early/late treatment)
 9. Discarded techniques — log for paper Methods section:
-   - MINE: overkill on n=55, overfitting risk in the estimator itself
-   - Direct Total Correlation: unstable at high dimensionality (p≈428, n=55)
-   - t-SNE: does not preserve global structure, unsuitable for longitudinal trajectories
-   - PCA: not biologically interpretable
-   - UMAP as model input: unstable, hyperparameter-dependent
+   - MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input
 10. UMAP — allowed ONLY for exploratory visualization in the paper.
-    Never as model features.
 11. Baseline hierarchy — mandatory for paper credibility:
-    Baseline 1: Logistic Regression (minimum reference)
-    Baseline 2: XGBoost / LightGBM (strong on small datasets, often beats LSTM)
+    Baseline 1: Logistic Regression
+    Baseline 2: XGBoost / LightGBM
     Baseline 3: LSTM on flat vectors
     Model:      Temporal GNN
-    Rationale: on small n gradient boosting is competitive. If GNN does not
-    beat XGBoost, it is an honest scientific result, not a failure.
-12. History length bias — explicit anti-leakage features:
-    Add as node/graph features:
+12. History length bias — add as explicit features:
     - absolute time from diagnosis to timepoint T
     - number of previous scans for that patient
-    Rationale: history length can be a proxy of the target.
-    Making these features explicit allows monitoring their importance.
+
+---
+
+## Preprocessing Pipeline (summary — see docs/PHASE_0.md for detail)
+1. Pivot radiomic CSV: 4792 rows → 1 row per (patient, timepoint)
+2. Merge with RANO labels on (Patient, Timepoint)
+3. Apply label shift: assign label_t+1 as target, drop last timepoint per patient
+4. Add temporal features: delta_t_weeks, time_from_diagnosis, scan_index
+5. Handle missing values: drop scans with incomplete sequences (document count)
+6. Compute delta features: Δf = (f_t - f_{t-1}) / delta_weeks
+7. Normalization: inside cross-validation only (StandardScaler fit on train fold)
+
+---
 
 ## Repository Structure
 ```
@@ -178,33 +181,34 @@ gbm-longitudinal-toolkit/
 ├── data/raw/lumiere/           # original CSVs — never modified
 ├── data/processed/             # pipeline output — DVC versioned
 ├── src/
-│   ├── audit/                  # dataset exploration
+│   ├── audit/                  # lumiere_audit.py, validate_dataset.py
 │   ├── preprocessing/          # build_dataset.py, normalizer.py
 │   ├── graphs/                 # graph_builder.py, delta_graph.py
 │   ├── models/                 # lstm_baseline.py, gnn.py, temporal_attention.py
 │   ├── training/               # trainer.py, cross_validation.py, metrics.py
 │   └── uncertainty/            # conformal.py
-├── tests/
+├── tests/                      # unit tests — no real CSVs, synthetic data only
 ├── experiments/                # MLflow runs
 ├── notebooks/                  # EDA — not production
 ├── configs/                    # model parameter YAMLs
-├── docs/                       # ADR + new dataset tutorial
+├── docs/                       # PHASE_0.md ... PHASE_5.md + ADR
 ├── FUTURE.md
-├── CONTEXT.md                  # this file
+├── CONTEXT.md
 ├── pyproject.toml
 └── dvc.yaml
 ```
 
+---
+
 ## Roadmap
-- Phase 0 — Data Foundation (2 weeks): build_clean_dataset.py, normalization, DVC
-  ⚠️ PRIORITY 1: compute and log n_effective (paired examples after label shift)
-  ⚠️ PRIORITY 2: per-patient EDA (follow EDA Guidelines above)
-  ⚠️ PRIORITY 3: Δt-only ablation as workflow leakage sanity check
-- Phase 1 — Graph Construction (3 weeks): parameterized GraphBuilder, delta-graph
-- Phase 2 — Baseline (2 weeks): full hierarchy LR → XGB → LSTM
-- Phase 3 — Temporal GNN (4 weeks): TumorGraphNet + TemporalAttention, ablation study
-- Phase 4 — UQ (2 weeks): Conformal Prediction, calibration
-- Phase 5 — Framework + Paper (4-6 weeks): parameterization, documentation, preprint
+- Phase 0 — Data Foundation: audit ✅ | preprocessing → | validation →
+- Phase 1 — Graph Construction (3 weeks): GraphBuilder, delta-graph
+- Phase 2 — Baseline (2 weeks): LR → XGB → LSTM
+- Phase 3 — Temporal GNN (4 weeks): TumorGraphNet + TemporalAttention
+- Phase 4 — UQ (2 weeks): Conformal Prediction
+- Phase 5 — Framework + Paper (4-6 weeks): documentation, preprint
+
+---
 
 ## Technology Stack
 - Python 3.12, uv for dependency management
@@ -217,23 +221,19 @@ gbm-longitudinal-toolkit/
 - Ruff + Mypy (pre-commit)
 - Pytest (testing)
 
+---
+
 ## Core Assumptions
-These assumptions belong in the paper Methods section. If one fails, the project changes.
-Verify empirically where possible.
-
 A1. Radiomic features contain predictive signal for RANO(t+1).
-    Verification: compare against Δt-only baseline (if Δt-only beats radiomics → A1 false).
-
+    Verification: compare against Δt-only baseline.
 A2. Expert RANO labels are reliable as ground truth.
-    Known limitation: inter-rater variability not quantified in LUMIERE dataset.
-    To be declared explicitly in the paper.
-
+    Known limitation: inter-rater variability not quantified.
 A3. Temporal feature dynamics contain additional signal beyond a single timepoint.
-    Verification: compare LSTM/GNN vs cross-sectional model (features_t only).
+    Verification: compare LSTM/GNN vs cross-sectional model.
+A4. 2 nodes (ET, NC) are sufficient to represent tumor structure for RANO prediction.
+    Known limitation: declare explicitly, propose edema extension in FUTURE.md.
 
-A4. 2 nodes (ET, NC) are sufficient to represent the tumor structure
-    relevant for RANO prediction.
-    Known limitation: declare explicitly, propose extension in FUTURE.md.
+---
 
 ## Scientific Claim
 Defensible formulation:
@@ -243,11 +243,37 @@ graph modelling and distribution-free uncertainty quantification"
 Notes:
 - Verify with systematic literature review before submission.
 - The real value is the replicable longitudinal pipeline, not the specific model.
-- Additional methodological contribution to validate: Temporal MI Stability
-  (consistency of ranking) as a temporally-aware feature selection criterion.
+- Additional methodological contribution: Temporal MI Stability (consistency of ranking).
+
+---
+
+## Software Engineering Principles
+
+These principles apply to every module in this codebase.
+
+1. **Single Responsibility** — every function and module does exactly one thing.
+2. **DRY** — if logic appears in two places, it belongs in a shared utility.
+3. **Fail Fast and Explicitly** — invalid states raise errors immediately with
+   descriptive messages. A silent wrong result is worse than a loud exception.
+4. **Pure Functions Where Possible** — reserve side effects for main().
+5. **Occam's Razor** — prefer the simplest solution. Do not introduce abstractions
+   unless they remove real duplication or manage real complexity.
+6. **Explicit Over Implicit** — type annotations on all public functions.
+   Named constants instead of magic strings or numbers.
+7. **Separation of Layers** — utilities (pure logic) → domain functions
+   (orchestrate + print) → entry point (I/O only).
+8. **Typed Results** — use dataclasses for structured return values.
+9. **Centralised I/O** — all CSV loading through a single _load_csv() function.
+10. **No Premature Optimisation** — correct and readable first. On n=318,
+    readability always wins.
+11. **Reproducibility** — fix random seeds explicitly (Python, NumPy, PyTorch).
+    Dataset versioned via DVC. All hyperparameters in YAML configs, never
+    hardcoded. MLflow logs config alongside metrics.
+
+---
 
 ## Important Notes
-- New ideas → FUTURE.md (e.g. Neural ODE, temporal point process, 3rd edema node)
+- New ideas → FUTURE.md (e.g. Neural ODE, 3rd edema node, raw MRI volumes)
 - GNN with 2 nodes may not beat baseline — limitation, not failure
 - Generalizable framework is the main value, not the model on LUMIERE
 - Seek clinical collaboration AFTER V1 for prospective validation
