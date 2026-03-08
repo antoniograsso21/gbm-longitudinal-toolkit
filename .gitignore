@@ -1,0 +1,19 @@
+# Data — mai su git, gestita da DVC
+data/raw/
+data/processed/
+*.dvc/cache
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# MLflow
+mlruns/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
