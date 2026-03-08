@@ -1,77 +1,43 @@
 # Phase 1 — Graph Construction
 
 ## Objective
-Transform the flat paired dataset produced in Phase 0 into a sequence of
-graphs per patient, one graph per timepoint, ready for the GNN in Phase 3.
+Transform the flat paired dataset into a sequence of graphs per patient,
+one graph per timepoint, ready for the GNN in Phase 3.
 
 **Input**: `data/processed/dataset_paired.parquet`
-**Output**: `data/processed/graphs/{patient_id}.pt` — one PyTorch Geometric
-Data object per patient, containing the full temporal graph sequence.
-
----
-
-## Where Phase 1 Sits in the Project
-
-```
-dataset_paired.parquet  (Phase 0 output)
-        │
-        ▼
-[Step 1.1] GraphBuilder       src/graphs/graph_builder.py
-        │   "How do I represent one timepoint as a graph?"
-        │
-        ▼
-[Step 1.2] DeltaGraphBuilder  src/graphs/delta_graph.py
-        │   "How do I encode change between consecutive timepoints?"
-        │
-        ▼
-[Step 1.3] TemporalSequence   src/graphs/temporal_sequence.py
-            "How do I assemble a patient's history into one object?"
-            Output: data/processed/graphs/{patient_id}.pt
-```
+**Output**: `data/processed/graphs/{patient_id}.pt`
 
 ---
 
 ## Graph Design
 
-### Why a graph at all?
-With only 2 nodes (ET and NC) the graph is topologically trivial — it is
-essentially a feature vector with an explicit relational structure.
-The value of the GNN lies in the temporal inductive bias, not topological
-complexity. This is a declared limitation (see CONTEXT.md, Technical Decision 6).
+### Three-node topology
+Each graph represents one tumor scan with three nodes:
 
-The graph formulation is the correct abstraction for two reasons:
-1. It is extensible: adding a third node (Edema, see FUTURE.md) requires
-   zero changes to the downstream model architecture.
-2. PyTorch Geometric natively handles sequences of graphs with temporal edges,
-   making the temporal attention module (Phase 3) cleaner to implement.
-
-### Node structure
-Each graph has exactly 2 nodes:
-- Node 0: ET (Enhancing Tumor)
-- Node 1: NC (Necrotic Core)
-
-Node features for timepoint T:
 ```
-x = [radiomic_features (selected ~20-30 after Phase 1 feature selection)
-     delta_features (Δf normalised by delta_weeks)
-     is_baseline_scan (binary flag)
+Necrosis ←→ Contrast-enhancing
+    ↖              ↗
+         Edema
+```
+
+Six directed edges (3 bidirectional pairs). Each edge carries:
+- `volumetric_ratio`: volume of source node / volume of target node
+- `delta_t_weeks`: temporal interval (monitored for leakage — see Phase 2 ablation)
+
+This design is directly motivated by the DeepBraTumIA segmentation labels
+and removes the main limitation of the original 2-node design. The triangular
+topology is fully extensible: adding a fourth node requires zero changes to
+the downstream GNN architecture.
+
+### Node features
+For each node (label) at timepoint T:
+```
+x = [selected radiomic features (~20-30 after Phase 1 feature selection)
+     delta features (Δf normalised by delta_t_weeks)
+     is_baseline_scan (binary)
      time_from_diagnosis_weeks
      scan_index]
 ```
-
-### Edge structure
-One undirected edge between ET and NC (bidirectional in PyG: 2 directed edges).
-
-Edge features:
-```
-edge_attr = [volumetric_ratio,   # ET_volume / NC_volume
-             delta_t_weeks]      # temporal interval — monitor importance in paper
-```
-
-Volumetric ratio encodes the relative size relationship between the two
-compartments, which is a known predictor of tumor aggressiveness.
-delta_t_weeks is included as an edge feature so its importance can be
-explicitly monitored and reported (Clinical Workflow Leakage control b).
 
 ### Graph-level label
 ```
@@ -84,22 +50,31 @@ y = RANO class at T+1  (0=Progressive, 1=Stable, 2=Response)
 
 **File**: `src/graphs/graph_builder.py`
 
-Responsible for building a single `torch_geometric.data.Data` object
-from one row of the paired dataset.
+Builds a single `torch_geometric.data.Data` object from one row.
 
 ```python
 @dataclass
 class GraphConfig:
-    node_feature_cols: list[str]    # ET_* and NC_* selected features
-    edge_feature_cols: list[str]    # volumetric_ratio, delta_t_weeks
-    label_col: str                  # "label_t1"
-    label_mapping: dict[str, int]   # {"Progressive": 0, "Stable": 1, "Response": 2}
+    node_feature_cols: dict[str, list[str]]  # {label: [feature columns]}
+    edge_feature_cols: list[str]             # volumetric_ratio, delta_t_weeks
+    label_col: str
+    label_mapping: dict[str, int]            # {"Progressive": 0, "Stable": 1, "Response": 2}
+    node_order: list[str]                    # ["Necrosis", "Contrast-enhancing", "Edema"]
 
 def build_graph(row: pd.Series, config: GraphConfig) -> Data:
     ...
 ```
 
-The config is loaded from `configs/graph_config.yaml` — never hardcoded.
+Node ordering is fixed by `node_order` — consistent across all graphs.
+Edge index for the triangular topology:
+```python
+# 3 nodes: 0=Necrosis, 1=Contrast-enhancing, 2=Edema
+# 6 directed edges (bidirectional)
+edge_index = torch.tensor([
+    [0, 1, 1, 0, 0, 2, 2, 0, 1, 2, 2, 1],
+    [1, 0, 0, 1, 2, 0, 0, 2, 2, 1, 1, 2],
+], dtype=torch.long)
+```
 
 ---
 
@@ -107,16 +82,11 @@ The config is loaded from `configs/graph_config.yaml` — never hardcoded.
 
 **File**: `src/graphs/delta_graph.py`
 
-Encodes the change between two consecutive graphs:
-```
-Δnode_features = (features_T - features_{T-1}) / delta_weeks
-```
+Reads delta columns already computed in Phase 0 (sub-step 7) and assigns
+them as a secondary node feature tensor. Keeps static and dynamic features
+separate for interpretability.
 
-This is already computed in Phase 0 as delta columns.
-The DeltaGraphBuilder simply reads those columns and assigns them as
-a secondary node feature tensor, keeping static and dynamic features separate.
-
-For baseline scans (is_baseline_scan=True): delta features are zero vectors.
+For baseline scans (`is_baseline_scan=True`): delta features are zero vectors.
 
 ---
 
@@ -124,15 +94,13 @@ For baseline scans (is_baseline_scan=True): delta features are zero vectors.
 
 **File**: `src/graphs/temporal_sequence.py`
 
-Assembles all graphs for a patient into a single object:
-
 ```python
 @dataclass
 class PatientGraphSequence:
     patient_id: str
-    graphs: list[Data]          # one per timepoint, ordered chronologically
+    graphs: list[Data]       # ordered chronologically
     n_timepoints: int
-    label_sequence: list[int]   # RANO class at each T+1
+    label_sequence: list[int]
 ```
 
 Saved as `data/processed/graphs/{patient_id}.pt` via `torch.save`.
@@ -141,37 +109,31 @@ Saved as `data/processed/graphs/{patient_id}.pt` via `torch.save`.
 
 ## Step 1.4 — Feature Selection (mRMR + Stability Selection)
 
-Before building the final graphs, reduce the feature space from ~856 to
-~20-30 features. This step executes on the training fold only (inside CV).
+Reduce from ~1284 columns (3 labels × 4 sequences × 107 features) to ~20-30.
+Executed on the training fold only (inside CV).
 
-**Algorithm**: mRMR (Minimum Redundancy Maximum Relevance)
+**Algorithm**: mRMR
 ```
 max I(xi; y) - (1/|S|) * sum I(xi; xj ∈ S)
 ```
 
-**MI estimator**: Kraskov (k-nearest neighbours), appropriate for
-continuous variables on small n.
+**MI estimator**: Kraskov k-NN (appropriate for continuous variables, small n)
+**Stability Selection**: B=100 bootstrap replicates, keep features with P(xi selected) > τ=0.7
 
-**Stability Selection**: repeat mRMR on B=100 bootstrap replicates.
-Keep only features where P(xi selected) > τ=0.7.
+Output: `configs/selected_features.yaml` — versioned and logged to MLflow.
 
-Rationale: on n=68 patients, standard mRMR selects different features
-at each fold. Stability Selection ensures only features that are
-consistently informative survive.
-
-**Implementation**: `src/preprocessing/feature_selector.py`
-
-Output: `configs/selected_features.yaml` — the list of selected features,
-versioned and logged to MLflow alongside model results.
+**2-node vs 3-node ablation note**: feature selection is run separately for
+both DeepBraTumIA (3-node) and HD-GLIO-AUTO (2-node) to support the graph
+topology ablation in Phase 3.
 
 ---
 
 ## Validation
 
-After building all graphs, run:
 ```python
-assert all(g.x.shape[1] == n_features for g in graphs)
-assert all(g.edge_index.shape == (2, 2) for g in graphs)  # bidirectional
+assert all(g.x.shape[0] == 3 for g in graphs)          # 3 nodes
+assert all(g.edge_index.shape == (2, 12) for g in graphs)  # 6 bidirectional edges
+assert all(g.edge_attr.shape == (12, 2) for g in graphs)   # 2 edge features
 assert all(g.y.shape == (1,) for g in graphs)
 ```
 
@@ -180,9 +142,11 @@ assert all(g.y.shape == (1,) for g in graphs)
 ## Definition of Done for Phase 1
 
 - [ ] GraphBuilder implemented and unit tested with synthetic data
+- [ ] 3-node topology verified (Necrosis, Contrast-enhancing, Edema)
+- [ ] Edge index correct for triangular bidirectional topology
 - [ ] DeltaGraphBuilder implemented and unit tested
 - [ ] TemporalSequence serialisation working (save/load roundtrip test)
 - [ ] Feature selection pipeline implemented (mRMR + Stability Selection)
 - [ ] `configs/graph_config.yaml` defined
-- [ ] All patient graphs saved to `data/processed/graphs/` and DVC tracked
-- [ ] Graph structure verified: 2 nodes, 1 bidirectional edge, correct feature dims
+- [ ] All patient graphs saved and DVC tracked
+- [ ] HD-GLIO-AUTO graphs also built (2-node) for ablation in Phase 3

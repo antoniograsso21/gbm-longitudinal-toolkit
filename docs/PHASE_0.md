@@ -4,9 +4,10 @@
 Verify that the dataset is structurally sound and build the clean paired
 dataset that every subsequent phase will consume.
 
+**Primary source**: DeepBraTumIA (3 labels: Necrosis, Contrast-enhancing, Edema)
 **Output of this phase**: `data/processed/dataset_paired.parquet`
-A single file containing one row per (patient, timepoint) paired example,
-with all radiomic features, temporal features, and the target label.
+One row per (patient, timepoint) paired example with all radiomic features,
+temporal features, and the target label.
 
 ---
 
@@ -17,196 +18,157 @@ Raw CSVs (data/raw/lumiere/)
         │
         ▼
 [Step 0.1] AUDIT          src/audit/lumiere_audit.py         ✅ DONE
-        │   "Are the data structurally sound?"
         │   Output: data/processed/dataset_stats.json
         │
         ▼
 [Step 0.2] PREPROCESSING  src/preprocessing/build_dataset.py ⏳ NEXT
-        │   "How do I build the ML-ready dataset?"
         │   Output: data/processed/dataset_paired.parquet
         │
         ▼
 [Step 0.3] VALIDATION     src/audit/validate_dataset.py      ⏳ TODO
-            "Is the dataset I built correct?"
             Output: data/processed/validation_report.json
 ```
 
-The audit asks whether the raw data is usable.
-The preprocessing transforms it into a usable form.
-The validation verifies the transformation was correct.
-All three are mandatory before any model is trained.
-
 ---
 
-## Step 0.1 — Audit
+## Step 0.1 — Audit ✅
 
-**Status**: complete.
 **Script**: `src/audit/lumiere_audit.py`
 **Run**: `python -m src.audit.lumiere_audit`
 
-### What it checks
-- Shape and missing values of all four CSVs
-- RANO label distribution per patient (not per scan)
-- Temporal intervals (Δt) per RANO class — clinical workflow leakage check
-- Radiomic feature completeness and skewness
-- n_effective: paired examples after label shift
-
 ### Key findings
-- n_effective = 318 paired examples, 68 patients
-- Class distribution: Progressive=229 (72%), Stable=45 (14%), Response=44 (14%)
-- Δt leakage: low risk (Progressive=13.3w, Stable=13.1w — nearly identical)
-- Δt=0: exactly 1 pair — likely week-000-1/week-000-2 surviving the RANO filter.
-  Must be identified and resolved before preprocessing (scrap or flag).
-- Missing values: 14.9% uniform across all 152 columns — entire scans missing
-  (HD-GLIO-AUTO failure). diagnostics_* columns (144 affected) will be dropped
-  in preprocessing anyway. Relevant for model: 107 radiomic features × 14.9%.
-- High-skew radiomic features: 62 with |skewness| > 2 (corrected from earlier
-  estimate of 68 — previous count included diagnostics_* columns erroneously).
-  Worst offender: original_ngtdm_Contrast (skewness=54). Log-transform candidates
-  to be applied in preprocessing before normalisation.
-- Demographics CSV: string "na" not recognised as NaN — fixed in _load_csv()
-  with explicit na_values list. Missing values now correctly detected:
-  IDH (25.3%), MGMT quantitative (29.7%), MGMT qualitative (12.1%).
 
-### Output
-`data/processed/dataset_stats.json` — full typed audit report
+**RANO:**
+- 398 valid timepoints after Pre/Post-Op exclusion and Patient-042 deduplication
+- 81 patients with ≥1 label; 68 with ≥2; 55 with ≥3
+
+**DeepBraTumIA (primary):**
+- 599 scans in CSV; 39 absent (extraction failed — label not found or ROI too small)
+- 70 scans with all-NaN features (segmentation silent failure)
+- 529 fully usable scans, 91 patients
+- Partial-NaN scans tracked separately — included in model, handled in preprocessing
+
+**HD-GLIO-AUTO (reference):**
+- 175 scans with all-NaN features (vs 70 in DeepBraTumIA — markedly worse)
+- 424 fully usable scans, 89 patients
+
+**n_effective (both t AND t+1 must have usable scans):**
+- DeepBraTumIA: **212 paired examples, 57 patients**
+  - Progressive=163 (77%), Stable=23 (11%), Response=26 (12%)
+- HD-GLIO-AUTO: 158 paired examples, 54 patients (reference only)
+
+**Temporal leakage:** low (Progressive=13.3w, Stable=13.3w, Response=16.0w)
+**Duplicate:** Patient-042 week-010 — SD and PD in raw file; PD kept (last), documented in Methods
+**High-skew features:** 67 with |skewness|>2 in DeepBraTumIA
 
 ---
 
-## Step 0.2 — Preprocessing
+## Step 0.2 — Preprocessing ⏳
 
-**Status**: to be implemented.
 **Script**: `src/preprocessing/build_dataset.py`
 **Run**: `python -m src.preprocessing.build_dataset`
 
 ### Sub-steps in order
 
-**Sub-step 1 — Pivot the radiomic CSV**
+**Sub-step 1 — Pivot the DeepBraTumIA CSV**
 
-Input: `LUMIERE-pyradiomics-hdglioauto-features.csv` (4792 rows)
-Structure: 1 row per (patient × timepoint × sequence × region)
-
-```
-Patient | Date | Sequence | Label name | feature_1 ... feature_107
-```
+Input: `LUMIERE-pyradiomics-deepbratumia-features.csv` (7188 rows)
+Structure: 1 row per (patient × timepoint × sequence × label)
 
 Output: 1 row per (patient × timepoint)
-Column naming convention: `{region}_{sequence}_{feature_name}`
+Column naming: `{label}_{sequence}_{feature_name}`
 
 ```
-Patient | Date | ET_CT1_feature_1 ... ET_CT1_feature_107
-                 ET_T1_feature_1  ... ET_T1_feature_107
-                 ET_T2_feature_1  ...
-                 ET_FLAIR_feature_1 ...
-                 NC_CT1_feature_1 ...
-                 ... (2 regions × 4 sequences × 107 features = 856 columns max)
+Patient | Timepoint | Necrosis_CT1_feature_1 ... Edema_FLAIR_feature_107
+                      (3 labels × 4 sequences × 107 features = 1284 columns max)
 ```
 
 Implementation: `pd.pivot_table` or `groupby + unstack`.
-Missing combinations (scan where a sequence is absent): NaN — handled in sub-step 5.
+Missing combinations (sequence absent for a label): NaN — handled in sub-step 5.
 
 **Sub-step 2 — Merge with RANO labels**
 
-Join the pivoted radiomic DataFrame with `LUMIERE-ExpertRating-v202211.csv`
-on (Patient, Date). Before joining:
-- Verify that the Date format is identical in both files (both use `week-NNN`)
-- Exclude Pre-Op and Post-Op entries from the RANO file
+Join on (Patient, Timepoint). Before joining:
+- Exclude Pre-Op and Post-Op from RANO
 - Apply RANO mapping: CR+PR → Response, SD → Stable, PD → Progressive
-
-Result: one row per (patient, timepoint) with features + RANO label.
+- Deduplicate Patient-042 week-010: keep last (PD)
 
 **Sub-step 3 — Label shift**
 
-For each patient, sort by week_num and shift the label forward by one step:
+For each patient, sort by week_num and shift label forward:
 - target = RANO label of the NEXT timepoint
-- Drop the last timepoint of every patient (no future label available)
+- Drop the last timepoint of every patient (no future label)
+- Drop pairs where t+1 has no usable radiomic features
 
-This is the most critical transformation in the project.
-Verify explicitly: no patient's last timepoint should appear in the output.
+This is the most critical transformation. Verify: no patient's last timepoint
+appears in the output. n_effective should be 212.
 
 **Sub-step 4 — Add temporal features**
 
-For each example add three columns:
+Three columns per example:
 - `delta_t_weeks`: weeks between scan T and scan T+1
-- `time_from_diagnosis_weeks`: week_num of scan T (proxy for disease timeline)
-- `scan_index`: ordinal position of this scan for this patient (0-based)
-
-These serve both as model features and as leakage monitoring variables.
-Their importance in the final model must be reported in the paper.
+- `time_from_diagnosis_weeks`: week_num of scan T
+- `scan_index`: ordinal position for this patient (0-based)
 
 **Sub-step 5 — Handle missing values**
 
-Strategy: drop scans where any sequence is entirely missing.
-Rationale: imputation on entire missing sequences introduces fabricated signal.
+Strategy: scans with all-NaN for ALL labels are already excluded by the
+feature join in sub-step 3. Scans with partial-NaN (some sequences missing)
+are retained. For these scans, missing sequence features are imputed with
+the per-feature mean computed on the training fold only (inside CV).
 
 Document and report:
-- Number of scans dropped
-- Number of patients affected
-- Whether any patient loses all their paired examples after dropping
+- Number of partial-NaN scans retained
+- Which labels/sequences are most commonly missing
 
-If a patient loses all examples, flag it explicitly in the validation report.
+**Sub-step 6 — Log-transform high-skew features**
 
-**Sub-step 6 — Compute delta features**
+Apply log1p transform to the 67 features with |skewness|>2.
+Apply before normalization, after pivot. Column names unchanged.
+Document the feature list in `configs/log_transform_features.yaml`.
 
-For each radiomic feature f, for each patient, compute:
+**Sub-step 7 — Compute delta features**
+
+For each radiomic feature f, for each patient:
 ```
-Δf_t = (f_t - f_{t-1}) / delta_weeks
+Δf_t = (f_t - f_{t-1}) / delta_t_weeks
 ```
+- First scan per patient: Δf = 0, `is_baseline_scan = True`
+- Delta columns named: `delta_{label}_{sequence}_{feature_name}`
 
-For the first scan of each patient (no t-1 exists):
-- Set Δf = 0
-- Set flag column `is_baseline_scan = True`
-
-The model can use this flag to ignore delta features for baseline scans.
-These columns are named `delta_{region}_{sequence}_{feature_name}`.
-
-Note: normalization is NOT performed here.
-It lives inside the cross-validator (see Phase 2).
+Normalization is NOT performed here — it lives inside cross-validation.
 
 ### Output
 `data/processed/dataset_paired.parquet`
 
-Parquet is preferred over CSV because:
-- Preserves dtypes (no silent string conversion of floats)
-- Faster to load in training loops
-- Smaller file size with compression
-
 ---
 
-## Step 0.3 — Dataset Validation
+## Step 0.3 — Dataset Validation ⏳
 
-**Status**: to be implemented.
 **Script**: `src/audit/validate_dataset.py`
-**Run**: `python -m src.audit.validate_dataset`
 
 ### What it verifies
-
-1. **n_effective**: assert len(dataset) == 318 (or document deviation)
-2. **No last-timepoint leakage**: for every patient, the last timepoint in the
-   raw RANO file must not appear as a training example in the paired dataset
-3. **No patient split contamination**: every row of a given patient has the
-   same patient ID — verify groupby(patient).count() is consistent
-4. **Label distribution**: assert class counts match audit report
-5. **Delta features**: assert Δf == 0 for all rows where is_baseline_scan == True
-6. **No future information**: assert that for every row, the target label
-   corresponds to the next timepoint's RANO, not the current one
-7. **Missing value counts**: assert counts match what was documented in sub-step 5
-
-### Output
-`data/processed/validation_report.json`
+1. `n_effective == 212` (or document deviation with explanation)
+2. No patient's last timepoint appears as a training example
+3. No patient split contamination
+4. Label distribution matches audit report
+5. Delta features == 0 for all `is_baseline_scan == True` rows
+6. Log-transform applied: verify skewness < 2 for the 67 transformed features
+7. No future information: target = label of NEXT timepoint, not current
 
 ---
 
 ## Testing
 
-Unit tests live in `tests/test_preprocessing.py`.
-They use synthetic data only — no real CSVs required for CI.
+Unit tests in `tests/test_preprocessing.py`. Synthetic data only — no real CSVs in CI.
 
-What to test:
+Tests to cover:
 - `parse_week`: known input/output pairs including edge cases
-- `_compute_consecutive_pairs`: verify label shift on a 3-patient synthetic dataset
-- Delta feature computation: verify Δf=0 on first scan, correct formula on others
-- Pivot logic: verify column naming convention on a minimal synthetic CSV
+- `_compute_consecutive_pairs`: label shift on a 3-patient synthetic dataset
+- `_float_week_to_str`: round-trip with `parse_week`
+- Delta feature computation: Δf=0 on first scan, correct formula otherwise
+- Pivot logic: column naming on a minimal synthetic DeepBraTumIA CSV
+- Log-transform: skewness reduced below 2 on synthetic skewed data
 
 ---
 
@@ -214,23 +176,18 @@ What to test:
 
 **Audit (Step 0.1)** ✅
 - [x] Audit script committed and passing
-- [x] dataset_stats.json saved: n_effective=318, 68 patients, 72%/14%/14%
-- [x] Demographics missing values correctly detected (na_values fix)
-- [x] Skewness corrected to 62 features on original_* only
-- [x] Δt=0 pair investigated: Patient-042 has two identical rows for week-010
-      in the raw RANO CSV (SD and PD) — a duplicate entry in the source data,
-      not a week-010-1/2 format issue. Decision: drop the first occurrence (SD)
-      in preprocessing, keep the second (PD) as the authoritative assessment.
-      A deduplication check for (Patient, Date) duplicates has been added to
-      the audit script to catch any similar cases. Document in paper Methods:
-      "One duplicate timepoint (Patient-042, week 10) was resolved by retaining
-      the later assessment (PD)."
+- [x] dataset_stats.json saved with both HD-GLIO-AUTO and DeepBraTumIA stats
+- [x] DeepBraTumIA chosen as primary source (91 patients, 529 usable scans)
+- [x] n_effective=212 (DeepBraTumIA), 158 (HD-GLIO-AUTO reference)
+- [x] Patient-042 duplicate documented and resolution strategy defined
+- [x] Partial-NaN scans tracked separately from all-NaN scans
+- [x] Temporal leakage assessed as low risk
 
 **Preprocessing (Step 0.2)**
-- [ ] Δt=0 pair resolved before build_dataset.py is written
 - [ ] `dataset_paired.parquet` generated and DVC tracked
-- [ ] 62 high-skew features log-transformed before normalisation
-- [ ] Missing scan count documented (how many scans dropped, which patients affected)
+- [ ] 67 high-skew features log-transformed before normalization
+- [ ] Partial-NaN scan count documented
+- [ ] n_effective verified == 212 after join
 
 **Validation (Step 0.3)**
 - [ ] Validation script passing all assertions
@@ -238,5 +195,5 @@ What to test:
 
 **Cross-cutting**
 - [ ] Unit tests passing in CI
-- [ ] Δt-only ablation baseline recorded (logistic regression on Δt alone)
-- [ ] Missing value count and dropped scan count in paper draft Methods section
+- [ ] Log-transform feature list in `configs/log_transform_features.yaml`
+- [ ] Missing sequence imputation strategy documented

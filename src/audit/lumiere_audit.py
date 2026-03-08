@@ -1,7 +1,7 @@
 """
 LUMIERE Dataset Audit — Phase 0
 ================================
-Explores the four LUMIERE CSVs following the EDA Guidelines in CONTEXT.md.
+Explores the LUMIERE CSVs following the EDA Guidelines in CONTEXT.md.
 
 FUNDAMENTAL RULE: the unit of analysis is always the PATIENT, not the scan.
 Every statistic is computed first per patient, then aggregated.
@@ -32,8 +32,26 @@ RANO_MAPPING: dict[str, str] = {
     "PD": "Progressive",
 }
 
-# String values treated as NaN when loading CSVs
 NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "nan", "NaN", ""]
+
+# Threshold for DeepBraTumIA viability as primary segmentation source.
+# Derived from: patients with >=3 valid RANO timepoints in the HD-GLIO-AUTO
+# baseline audit = 55. Below this number the 3-node graph loses too many
+# patients to be credible vs the 2-node baseline.
+DEEPBRATUMIA_VIABILITY_THRESHOLD: int = 55
+
+# CSV filenames — centralised to avoid magic strings
+CSV_RANO = "LUMIERE-ExpertRating-v202211.csv"
+CSV_COMPLETENESS = "LUMIERE-datacompleteness.csv"
+CSV_HDGLIO = "LUMIERE-pyradiomics-hdglioauto-features.csv"
+CSV_DEEPBRATUMIA = "LUMIERE-pyradiomics-deepbratumia-features.csv"
+
+# Column name constants — different CSVs use different names for the same concept
+PATIENT_COL = "Patient"
+TIMEPOINT_COL_RADIOMIC = "Time point"     # radiomic CSVs
+TIMEPOINT_COL_COMPLETENESS = "Timepoint"  # datacompleteness CSV
+LABEL_COL = "Label name"
+SEQUENCE_COL = "Sequence"
 
 SECTION = "=" * 60
 
@@ -44,42 +62,64 @@ SECTION = "=" * 60
 @dataclass
 class RanoStats:
     total_timepoints: int
-    valid_timepoints: int
+    valid_timepoints: int           # after Pre/Post-Op exclusion and deduplication
     n_patients: int
     timepoints_per_patient: dict[str, float]
     class_distribution_per_scan: dict[str, int]
     class_distribution_per_patient: dict[str, int]
     dominant_patients: dict[str, int]
-    n_duplicate_timepoints: int  # (Patient, Date) duplicates in raw RANO file
+    n_duplicate_timepoints: int     # (Patient, Date) conflicts resolved by keeping last
 
 
 @dataclass
 class TemporalStats:
-    delta_weeks_summary: dict[str, float]  # describe() output
+    delta_weeks_summary: dict[str, float]
     mean_delta_by_class: dict[str, float]
     n_zero_delta: int
 
 
 @dataclass
 class RadiomicStats:
+    """Coverage and quality statistics for one radiomic CSV."""
+    source: str
     shape: tuple[int, int]
-    n_missing_features: int
+    n_labels: int
+    labels_found: list[str]
+    # Coverage chain: completeness -> CSV -> usable
+    n_scans_in_completeness: int    # ground truth from datacompleteness.csv
+    n_scans_in_csv: int             # unique (Patient, Timepoint) actually in CSV
+    n_scans_missing_from_csv: int   # in completeness but absent from CSV (extraction failed)
+    n_scans_with_all_nan: int       # in CSV but all original_* features are NaN
+    n_scans_with_partial_nan: int   # usable but at least one sequence has NaN features
+    n_scans_fully_usable: int       # all required labels present, no all-NaN rows
+    n_patients_fully_usable: int    # patients with >=1 fully usable scan
     n_high_skew_features: int
     top_skew: dict[str, float]
 
 
 @dataclass
-class AuditResult:
-    n_effective: int
+class PairedStats:
+    """n_effective broken down by radiomic data source."""
+    source: str
+    n_effective_rano_only: int              # RANO consecutive pairs — upper bound
+    n_pairs_dropped_missing_features: int   # pairs where t or t+1 had no usable scan
+    n_effective: int                        # true ML sample size
     n_patients: int
     class_distribution: dict[str, int]
+
+
+@dataclass
+class AuditResult:
     rano: RanoStats
     temporal: TemporalStats
-    radiomic: RadiomicStats
+    radiomic_hdglio: RadiomicStats
+    radiomic_deepbratumia: RadiomicStats
+    paired_hdglio: PairedStats
+    paired_deepbratumia: PairedStats
 
 
 # ---------------------------------------------------------------------------
-# Utilities
+# Private utilities — pure functions, no side effects
 # ---------------------------------------------------------------------------
 def _section(title: str) -> None:
     print(f"\n{SECTION}\n{title}\n{SECTION}")
@@ -95,9 +135,9 @@ def parse_week(date_str: str) -> float:
     Parse LUMIERE week strings into a float ordinal.
 
     Examples:
-        'week-044'   → 44.0
-        'week-000-1' → 0.1   (first pre-op scan)
-        'week-000-2' → 0.2   (second pre-op scan)
+        'week-044'   -> 44.0
+        'week-000-1' -> 0.1
+        'week-000-2' -> 0.2
 
     Raises:
         ValueError: if the string does not match the expected format.
@@ -111,68 +151,199 @@ def parse_week(date_str: str) -> float:
     return week
 
 
-def _add_week_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a copy of df with a 'week_num' column parsed from 'Date'."""
+def _float_week_to_str(week_num: float) -> str:
+    """
+    Convert a float week ordinal back to the LUMIERE string format.
+
+    Examples:
+        44.0 -> 'week-044'
+        0.1  -> 'week-000-1'
+    """
+    base = int(week_num)
+    suffix = round((week_num - base) * 10)
+    if suffix > 0:
+        return f"week-{base:03d}-{suffix}"
+    return f"week-{base:03d}"
+
+
+def _add_week_column(df: pd.DataFrame, date_col: str = "Date") -> pd.DataFrame:
+    """Return a copy of df with a 'week_num' float column parsed from date_col."""
     df = df.copy()
-    df["week_num"] = df["Date"].apply(parse_week)
-    return df.sort_values(["Patient", "week_num"])
+    df["week_num"] = df[date_col].apply(parse_week)
+    return df.sort_values([PATIENT_COL, "week_num"])
 
 
 def _compute_consecutive_pairs(df: pd.DataFrame) -> pd.DataFrame:
     """
-    For each patient build consecutive (t, t+1) pairs.
+    For each patient build consecutive (t, t+1) pairs from a week-sorted DataFrame.
+
     Returns a DataFrame with columns:
-        patient, week_t, week_t1, delta_weeks, rating_t, rating_t1, label_t1
+        patient, week_t, week_t1, delta_weeks, rating_t, label_t1
+
     Raises:
         ValueError: if any delta_weeks < 0 (ordering inconsistency).
     """
     records = []
-    for patient, group in df.groupby("Patient"):
+    for patient, group in df.groupby(PATIENT_COL):
         rows = group.reset_index(drop=True)
         for i in range(len(rows) - 1):
-            delta = rows.loc[i + 1, "week_num"] - rows.loc[i, "week_num"]
+            delta = rows.iloc[i + 1]["week_num"] - rows.iloc[i]["week_num"]
             if delta < 0:
                 raise ValueError(
-                    f"Negative Δt ({delta}) for patient {patient} "
-                    f"between week {rows.loc[i, 'week_num']} "
-                    f"and {rows.loc[i + 1, 'week_num']}."
+                    f"Negative delta_t ({delta:.1f}) for {patient} "
+                    f"at weeks {rows.iloc[i]['week_num']} -> {rows.iloc[i+1]['week_num']}."
                 )
             records.append({
                 "patient": patient,
-                "week_t": rows.loc[i, "week_num"],
-                "week_t1": rows.loc[i + 1, "week_num"],
+                "week_t": rows.iloc[i]["week_num"],
+                "week_t1": rows.iloc[i + 1]["week_num"],
                 "delta_weeks": delta,
-                "rating_t": rows.loc[i, "Rating_grouped"],
-                "label_t1": rows.loc[i + 1, "Rating_grouped"],
+                "rating_t": rows.iloc[i]["Rating_grouped"],
+                "label_t1": rows.iloc[i + 1]["Rating_grouped"],
             })
     return pd.DataFrame(records)
 
 
+def _analyse_scan_completeness(
+    feat: pd.DataFrame,
+    required_labels: list[str],
+) -> tuple[set[tuple[str, str]], int, int]:
+    """
+    Classify every (Patient, Timepoint) scan in the radiomic CSV.
+
+    A scan is FULLY USABLE if every required label has at least one row where
+    at least one original_* feature is non-NaN (i.e. extraction succeeded for
+    at least one sequence).
+
+    A scan is PARTIALLY NaN if it is fully usable but at least one sequence
+    row has all-NaN original_* features (some sequences failed, others did not).
+
+    Returns:
+        complete_scans: set of (Patient, Timepoint) that are fully usable
+        n_all_nan_scans: scans where ALL rows for the scan are all-NaN
+        n_partial_nan_scans: usable scans with at least one all-NaN sequence row
+    """
+    radiomic_cols = [c for c in feat.columns if c.startswith("original_")]
+
+    feat = feat.copy()
+    feat["_row_usable"] = feat[radiomic_cols].notna().any(axis=1)
+
+    # Per (Patient, Timepoint, Label): is at least one sequence row usable?
+    label_usability = (
+        feat.groupby([PATIENT_COL, TIMEPOINT_COL_RADIOMIC, LABEL_COL])["_row_usable"]
+        .any()
+        .reset_index()
+        .rename(columns={"_row_usable": "label_usable"})
+    )
+
+    # Per (Patient, Timepoint): which labels are usable?
+    usable_labels_per_scan = (
+        label_usability[label_usability["label_usable"]]
+        .groupby([PATIENT_COL, TIMEPOINT_COL_RADIOMIC])[LABEL_COL]
+        .apply(set)
+        .reset_index()
+    )
+    required_set = set(required_labels)
+    complete_mask = usable_labels_per_scan[LABEL_COL].apply(
+        lambda s: required_set.issubset(s)
+    )
+    complete_df = usable_labels_per_scan[complete_mask]
+    complete_scans = set(zip(complete_df[PATIENT_COL], complete_df[TIMEPOINT_COL_RADIOMIC]))
+
+    # Scans where every single row has all-NaN features
+    row_usability_per_scan = (
+        feat.groupby([PATIENT_COL, TIMEPOINT_COL_RADIOMIC])["_row_usable"]
+        .any()
+        .reset_index()
+        .rename(columns={"_row_usable": "scan_has_any_usable_row"})
+    )
+    n_all_nan_scans = int((~row_usability_per_scan["scan_has_any_usable_row"]).sum())
+
+    # Usable scans that still have at least one all-NaN sequence row
+    has_any_nan_row = (
+        feat.groupby([PATIENT_COL, TIMEPOINT_COL_RADIOMIC])["_row_usable"]
+        .apply(lambda s: (~s).any())
+        .reset_index()
+        .rename(columns={"_row_usable": "has_nan_row"})
+    )
+    complete_with_nan = has_any_nan_row[
+        has_any_nan_row.apply(
+            lambda r: (r[PATIENT_COL], r[TIMEPOINT_COL_RADIOMIC]) in complete_scans
+            and r["has_nan_row"],
+            axis=1,
+        )
+    ]
+    n_partial_nan_scans = len(complete_with_nan)
+
+    return complete_scans, n_all_nan_scans, n_partial_nan_scans
+
+
+def _compute_paired_with_radiomics(
+    rano_valid: pd.DataFrame,
+    complete_scans: set[tuple[str, str]],
+    source_name: str,
+) -> PairedStats:
+    """
+    Compute n_effective requiring complete radiomic features at BOTH t and t+1.
+
+    A paired example (t, t+1) is usable only if:
+    1. t and t+1 are consecutive RANO-labelled timepoints
+    2. Scan at t  has complete features (graph construction at t)
+    3. Scan at t+1 has complete features (delta feature computation needs t+1)
+    """
+    df = _add_week_column(rano_valid)
+    all_pairs = _compute_consecutive_pairs(df)
+    n_rano_only = len(all_pairs)
+
+    def _both_have_features(row: pd.Series) -> bool:
+        t_key = (row["patient"], _float_week_to_str(row["week_t"]))
+        t1_key = (row["patient"], _float_week_to_str(row["week_t1"]))
+        return t_key in complete_scans and t1_key in complete_scans
+
+    usable = all_pairs[all_pairs.apply(_both_have_features, axis=1)]
+    class_dist = usable["label_t1"].value_counts().to_dict()
+
+    return PairedStats(
+        source=source_name,
+        n_effective_rano_only=n_rano_only,
+        n_pairs_dropped_missing_features=n_rano_only - len(usable),
+        n_effective=len(usable),
+        n_patients=int(usable["patient"].nunique()),
+        class_distribution={k: int(v) for k, v in class_dist.items()},
+    )
+
+
 # ---------------------------------------------------------------------------
-# Step 1 — Raw file overview
+# Step 1 — Raw file overview (compact for large radiomic CSVs)
 # ---------------------------------------------------------------------------
 def audit_raw_files() -> None:
-    """Print shape, columns, head, and missing values for every CSV."""
+    """
+    Print shape, columns, and missing values for every CSV.
+    Full row preview is skipped for radiomic CSVs (152 columns — illegible).
+    """
     csv_files = sorted(DATA_DIR.glob("*.csv"))
     if not csv_files:
-        print(f"❌ No CSV found in {DATA_DIR}. Copy files before running.")
+        print(f"No CSV found in {DATA_DIR}. Copy raw files before running.")
         return
 
-    print(f"📂 Files found: {[f.name for f in csv_files]}")
+    print(f"Files found: {[f.name for f in csv_files]}")
+    large_csvs = {CSV_HDGLIO, CSV_DEEPBRATUMIA}
 
     for filepath in csv_files:
-        _section(f"📄 {filepath.name}")
+        _section(f"  {filepath.name}")
         df = _load_csv(filepath.name)
-        print(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+        print(f"Shape: {df.shape[0]} rows x {df.shape[1]} columns")
         print(f"\nColumns:\n{df.columns.tolist()}")
-        print(f"\nFirst 3 rows:\n{df.head(3).to_string()}")
+
+        if filepath.name not in large_csvs:
+            print(f"\nFirst 3 rows:\n{df.head(3).to_string()}")
 
         null_pct = (df.isnull().sum() / len(df) * 100).round(1)
         missing = null_pct[null_pct > 0]
         if missing.empty:
-            print("\n✅ No missing values")
+            print("\nNo missing values")
         else:
-            print(f"\n⚠️  Missing values (% per column):\n{missing.to_string()}")
+            print(f"\nMissing values (% per column):\n{missing.to_string()}")
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +353,17 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     """
     Analyse RANO labels following the per-patient EDA rule.
 
+    (Patient, Date) duplicates are resolved by keeping the last occurrence,
+    consistent with the documented decision for Patient-042 week-010 (PD kept,
+    SD dropped — see paper Methods).
+
     Returns:
-        rano_valid: filtered and mapped DataFrame
+        rano_valid: filtered, mapped, and deduplicated DataFrame
         stats: RanoStats dataclass
     """
-    _section("📊 RANO AUDIT — per patient")
+    _section("RANO AUDIT — per patient")
 
-    rano = _load_csv("LUMIERE-ExpertRating-v202211.csv")
+    rano = _load_csv(CSV_RANO)
     rano.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
 
     print(f"Total timepoints in file: {len(rano)}")
@@ -197,47 +372,50 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     rano_valid = rano[~rano["Rating"].isin(RANO_EXCLUDE)].copy()
     rano_valid["Rating_grouped"] = rano_valid["Rating"].map(RANO_MAPPING)
 
-    print(f"\n✅ Valid timepoints after Pre/Post-Op exclusion: {len(rano_valid)}")
-    print(f"✅ Patients with ≥1 valid timepoint: {rano_valid['Patient'].nunique()}")
+    print(f"\nValid timepoints after Pre/Post-Op exclusion: {len(rano_valid)}")
+    print(f"Patients with >=1 valid timepoint: {rano_valid[PATIENT_COL].nunique()}")
 
-    tp_per_patient = rano_valid.groupby("Patient")["Date"].count()
+    tp_per_patient = rano_valid.groupby(PATIENT_COL)["Date"].count()
     describe = tp_per_patient.describe().round(1)
-    print(f"\n📊 Valid timepoints per patient:\n{describe.to_string()}")
-
+    print(f"\nValid timepoints per patient:\n{describe.to_string()}")
     for threshold in [2, 3, 4, 5]:
-        print(f"  Patients with ≥{threshold} timepoints: {(tp_per_patient >= threshold).sum()}")
+        print(f"  Patients with >={threshold} timepoints: {(tp_per_patient >= threshold).sum()}")
 
     per_scan = rano_valid["Rating_grouped"].value_counts().to_dict()
-    print(f"\n📊 Class distribution (per scan — raw):\n{pd.Series(per_scan).to_string()}")
+    print(f"\nClass distribution (per scan):\n{pd.Series(per_scan).to_string()}")
 
     per_patient = {
-        cls: int(rano_valid[rano_valid["Rating_grouped"] == cls]["Patient"].nunique())
+        cls: int(rano_valid[rano_valid["Rating_grouped"] == cls][PATIENT_COL].nunique())
         for cls in ["Progressive", "Stable", "Response"]
     }
-    print(f"\n📊 Class distribution (per patient — ≥1 occurrence):")
+    print("\nClass distribution (per patient — >=1 occurrence):")
     for cls, n in per_patient.items():
         print(f"  {cls}: {n} patients")
 
     top5 = tp_per_patient.sort_values(ascending=False).head(5)
-    print(f"\n⚠️  Top 5 patients by scan count (dominance risk):\n{top5.to_string()}")
+    print(f"\nTop 5 patients by scan count (dominance risk):\n{top5.to_string()}")
 
-    # Duplicate (Patient, Date) check — catches raw data anomalies like Patient-042 week-010
-    duplicates = rano_valid[rano_valid.duplicated(subset=["Patient", "Date"], keep=False)]
+    duplicates = rano_valid[rano_valid.duplicated(subset=[PATIENT_COL, "Date"], keep=False)]
+    n_dupes = int(len(duplicates) // 2)
     if not duplicates.empty:
-        print(f"\n⚠️  Duplicate (Patient, Date) entries found — must be resolved before preprocessing:")
-        print(duplicates[["Patient", "Date", "Rating_grouped"]].to_string())
+        print("\nDuplicate (Patient, Date) entries — keeping last occurrence:")
+        print(duplicates[[PATIENT_COL, "Date", "Rating_grouped"]].to_string())
+        rano_valid = rano_valid.drop_duplicates(
+            subset=[PATIENT_COL, "Date"], keep="last"
+        ).copy()
+        print(f"  Rows after deduplication: {len(rano_valid)}")
     else:
-        print("\n✅ No duplicate (Patient, Date) entries")
+        print("\nNo duplicate (Patient, Date) entries")
 
     stats = RanoStats(
         total_timepoints=len(rano),
         valid_timepoints=len(rano_valid),
-        n_patients=int(rano_valid["Patient"].nunique()),
+        n_patients=int(rano_valid[PATIENT_COL].nunique()),
         timepoints_per_patient=describe.to_dict(),
         class_distribution_per_scan={k: int(v) for k, v in per_scan.items()},
         class_distribution_per_patient=per_patient,
         dominant_patients=top5.to_dict(),
-        n_duplicate_timepoints=int(rano_valid.duplicated(subset=["Patient", "Date"]).sum()),
+        n_duplicate_timepoints=n_dupes,
     )
     return rano_valid, stats
 
@@ -247,27 +425,27 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
 # ---------------------------------------------------------------------------
 def audit_temporal_intervals(rano_valid: pd.DataFrame) -> TemporalStats:
     """
-    Analyse Δt between consecutive scans per patient.
-    Key check: if Progressive has a much lower mean Δt → leakage risk.
+    Analyse delta_t between consecutive scans per patient.
+    Key check: Progressive with significantly lower mean delta_t signals leakage.
     """
-    _section("⏱️  TEMPORAL INTERVALS — clinical workflow leakage check")
+    _section("TEMPORAL INTERVALS — clinical workflow leakage check")
 
     df = _add_week_column(rano_valid)
     pairs = _compute_consecutive_pairs(df)
 
     summary = pairs["delta_weeks"].describe().round(1)
-    print(f"\n📊 Δt distribution (weeks):\n{summary.to_string()}")
+    print(f"\ndelta_t distribution (weeks):\n{summary.to_string()}")
 
     mean_by_class = pairs.groupby("label_t1")["delta_weeks"].mean().round(1)
-    print(f"\n📊 Mean Δt by RANO class at T+1 (leakage signal):\n{mean_by_class.to_string()}")
+    print(f"\nMean delta_t by RANO class at T+1:\n{mean_by_class.to_string()}")
     print(
-        "\n⚠️  If Progressive has a significantly lower Δt → "
-        "clinical workflow leakage confirmed. Must be declared in the paper."
+        "\nIf Progressive has a significantly lower delta_t -> "
+        "clinical workflow leakage confirmed. Declare in paper."
     )
 
     n_zero = int((pairs["delta_weeks"] == 0).sum())
     if n_zero > 0:
-        print(f"\n⚠️  {n_zero} pairs with Δt=0 (same-week scans). Investigate before preprocessing.")
+        print(f"\n{n_zero} pairs with delta_t=0 (same-week scans). Investigate before preprocessing.")
 
     return TemporalStats(
         delta_weeks_summary=summary.to_dict(),
@@ -277,74 +455,144 @@ def audit_temporal_intervals(rano_valid: pd.DataFrame) -> TemporalStats:
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Radiomic features audit
+# Step 4 — Radiomic features audit (parametric — used for both sources)
 # ---------------------------------------------------------------------------
-def audit_radiomic_features() -> RadiomicStats:
+def audit_radiomic_features(
+    csv_name: str,
+    source_name: str,
+    required_labels: list[str],
+) -> tuple[RadiomicStats, set[tuple[str, str]]]:
     """
-    Analyse the PyRadiomics CSV: missing values and skewness.
-    Skewness is computed only on 'original_*' columns (true radiomic features).
-    """
-    _section("🔬 RADIOMIC FEATURES AUDIT")
+    Analyse a PyRadiomics CSV and return coverage statistics plus the set of
+    fully usable (Patient, Timepoint) scan keys.
 
-    feat = _load_csv("LUMIERE-pyradiomics-hdglioauto-features.csv")
+    Coverage chain audited:
+    1. datacompleteness.csv -> ground truth of all attempted scans
+    2. radiomic CSV -> scans where extraction produced any rows
+    3. all-NaN rows -> present in CSV but extraction silently failed
+    4. partial-NaN scans -> usable but some sequences missing (logged for Methods)
+    5. fully usable scans -> all required labels present in at least one sequence
+
+    Args:
+        csv_name: filename of the radiomic CSV
+        source_name: label used in output and dataclass ("HD-GLIO-AUTO" / "DeepBraTumIA")
+        required_labels: labels that must ALL be usable for a scan to be complete
+    """
+    _section(f"RADIOMIC FEATURES AUDIT — {source_name}")
+
+    feat = _load_csv(csv_name)
+    completeness = _load_csv(CSV_COMPLETENESS)
     print(f"Shape: {feat.shape}")
 
-    # Missing values (all columns)
-    null_pct = (feat.isnull().sum() / len(feat) * 100).round(1)
-    missing = null_pct[null_pct > 0]
-    print(f"\n⚠️  Columns with missing values: {len(missing)}")
-    if not missing.empty:
-        print(missing.sort_values(ascending=False).head(20).to_string())
+    # 1. Coverage vs datacompleteness
+    dc_scans = set(zip(completeness[PATIENT_COL], completeness[TIMEPOINT_COL_COMPLETENESS]))
+    feat_scans = set(zip(feat[PATIENT_COL], feat[TIMEPOINT_COL_RADIOMIC]))
+    n_in_completeness = len(dc_scans)
+    n_in_csv = len(feat_scans)
+    n_missing_from_csv = len(dc_scans - feat_scans)
 
-    # Skewness — only true radiomic features
+    print(f"\nScans in datacompleteness (ground truth): {n_in_completeness}")
+    print(f"Scans in {source_name} CSV:               {n_in_csv}")
+    if n_missing_from_csv > 0:
+        print(
+            f"Scans absent from CSV:                    {n_missing_from_csv} "
+            f"(label not found or ROI too small — declare in paper Methods)"
+        )
+    else:
+        print(f"All completeness scans present in {source_name} CSV")
+
+    # 2-4. NaN analysis and usable scan classification
+    complete_scans, n_all_nan, n_partial_nan = _analyse_scan_completeness(
+        feat, required_labels
+    )
+    n_fully_usable = len(complete_scans)
+    n_patients_usable = len({p for p, _ in complete_scans})
+
+    print(f"\nScans with ALL rows all-NaN (silent failure):    {n_all_nan}")
+    print(
+        f"Usable scans with partial NaN sequences:         {n_partial_nan} "
+        f"(included in model — missing sequences handled in preprocessing)"
+    )
+    print(f"Scans fully usable ({len(required_labels)} labels, >=1 good sequence): {n_fully_usable}")
+    print(f"Patients with >=1 fully usable scan:             {n_patients_usable}")
+
+    # Labels and structure
+    labels_found = sorted(feat[LABEL_COL].dropna().unique().tolist())
+    n_sequences = feat[SEQUENCE_COL].nunique() if SEQUENCE_COL in feat.columns else "?"
+    print(f"\nLabels found:  {labels_found}")
+    print(f"Sequences: {n_sequences} | Labels: {len(labels_found)}")
+    print(f"  -> Each scan generates {n_sequences}x{len(labels_found)} rows")
+
+    # Skewness on original_* features only
     radiomic_cols = [c for c in feat.columns if c.startswith("original_")]
     skewness = feat[radiomic_cols].skew().abs()
     high_skew = skewness[skewness > 2].sort_values(ascending=False)
-    print(f"\n⚠️  Radiomic features with skewness > 2 (log-transform candidates): {len(high_skew)}")
+    print(f"\nFeatures with |skewness| > 2 (log-transform candidates): {len(high_skew)}")
     if not high_skew.empty:
         print(high_skew.head(10).to_string())
 
-    # Structure insight
-    n_sequences = feat["Sequence"].nunique() if "Sequence" in feat.columns else "?"
-    n_regions = feat["Label name"].nunique() if "Label name" in feat.columns else "?"
-    print(f"\n📊 Sequences: {n_sequences} | Regions: {n_regions}")
-    print(f"   → Each scan generates {n_sequences}×{n_regions} rows in this CSV")
-    print(f"   → Effective scans ≈ {len(feat) // (n_sequences * n_regions)}")
+    # Decision guidance (DeepBraTumIA only)
+    if source_name == "DeepBraTumIA":
+        print(f"\n{'-' * 60}")
+        verdict = (
+            "VIABLE as primary source"
+            if n_patients_usable >= DEEPBRATUMIA_VIABILITY_THRESHOLD
+            else "REVERT TO HD-GLIO-AUTO"
+        )
+        print(f"DECISION — threshold: >={DEEPBRATUMIA_VIABILITY_THRESHOLD} patients")
+        print(f"  Current: {n_patients_usable} patients -> {verdict}")
+        print(f"{'-' * 60}")
 
-    return RadiomicStats(
+    stats = RadiomicStats(
+        source=source_name,
         shape=feat.shape,
-        n_missing_features=int(len(missing)),
+        n_labels=len(labels_found),
+        labels_found=labels_found,
+        n_scans_in_completeness=n_in_completeness,
+        n_scans_in_csv=n_in_csv,
+        n_scans_missing_from_csv=n_missing_from_csv,
+        n_scans_with_all_nan=n_all_nan,
+        n_scans_with_partial_nan=n_partial_nan,
+        n_scans_fully_usable=n_fully_usable,
+        n_patients_fully_usable=n_patients_usable,
         n_high_skew_features=int(len(high_skew)),
         top_skew=high_skew.head(10).round(2).to_dict(),
     )
+    return stats, complete_scans
 
 
 # ---------------------------------------------------------------------------
-# Step 5 — Effective sample size (paired examples after label shift)
+# Step 5 — Effective sample size (RANO + radiomics join, per source)
 # ---------------------------------------------------------------------------
-def compute_n_effective(rano_valid: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def compute_n_effective(
+    rano_valid: pd.DataFrame,
+    complete_scans: set[tuple[str, str]],
+    source_name: str,
+) -> PairedStats:
     """
-    Compute n_effective: paired (features_t, label_t+1) examples after label shift.
-    This is the true sample size of the project.
+    Compute n_effective: paired examples where BOTH t and t+1 have usable scans.
 
-    Returns:
-        paired_df: DataFrame with all paired examples
-        stats: dict with n_effective, n_patients, class distribution
+    Requirements for a valid paired example:
+    1. Consecutive RANO-labelled timepoints (t, t+1)
+    2. Complete radiomic features at t   (graph construction)
+    3. Complete radiomic features at t+1 (delta feature computation requires t+1)
+
+    Args:
+        rano_valid: filtered and deduplicated RANO DataFrame
+        complete_scans: (Patient, Timepoint) keys with fully usable features
+        source_name: "HD-GLIO-AUTO" or "DeepBraTumIA"
     """
-    _section("🎯 N_EFFECTIVE — paired examples after label shift")
+    _section(f"N_EFFECTIVE — {source_name} (label shift + radiomics join)")
 
-    df = _add_week_column(rano_valid)
-    paired_df = _compute_consecutive_pairs(df)
+    stats = _compute_paired_with_radiomics(rano_valid, complete_scans, source_name)
 
-    n_effective = len(paired_df)
-    n_patients = paired_df["patient"].nunique()
-    class_dist = paired_df["label_t1"].value_counts().to_dict()
+    print(f"\nRANO-only pairs (upper bound):                     {stats.n_effective_rano_only}")
+    print(f"Pairs dropped (t or t+1 missing usable scan):     {stats.n_pairs_dropped_missing_features}")
+    print(f"n_effective (true ML sample size):                 {stats.n_effective}")
+    print(f"Patients represented:                              {stats.n_patients}")
+    print(f"\nClass distribution (label_t+1):\n{pd.Series(stats.class_distribution).to_string()}")
 
-    print(f"\n✅ n_effective (total paired examples): {n_effective}")
-    print(f"✅ Patients represented: {n_patients}")
-    print(f"\n📊 Class distribution (label_t+1):\n{pd.Series(class_dist).to_string()}")
-
-    return paired_df, {"n_effective": n_effective, "n_patients": n_patients, "class_distribution": class_dist}
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -353,22 +601,35 @@ def compute_n_effective(rano_valid: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("🧠 GBM Longitudinal Toolkit — LUMIERE Audit")
+    print("GBM Longitudinal Toolkit — LUMIERE Audit")
     print(SECTION)
 
     audit_raw_files()
+
     rano_valid, rano_stats = audit_rano()
     temporal_stats = audit_temporal_intervals(rano_valid)
-    radiomic_stats = audit_radiomic_features()
-    paired_df, paired_stats = compute_n_effective(rano_valid)
+
+    radiomic_hd, complete_hd = audit_radiomic_features(
+        csv_name=CSV_HDGLIO,
+        source_name="HD-GLIO-AUTO",
+        required_labels=["Non-enhancing", "Contrast-enhancing"],
+    )
+    radiomic_db, complete_db = audit_radiomic_features(
+        csv_name=CSV_DEEPBRATUMIA,
+        source_name="DeepBraTumIA",
+        required_labels=["Necrosis", "Contrast-enhancing", "Edema"],
+    )
+
+    paired_hd = compute_n_effective(rano_valid, complete_hd, "HD-GLIO-AUTO")
+    paired_db = compute_n_effective(rano_valid, complete_db, "DeepBraTumIA")
 
     result = AuditResult(
-        n_effective=paired_stats["n_effective"],
-        n_patients=paired_stats["n_patients"],
-        class_distribution=paired_stats["class_distribution"],
         rano=rano_stats,
         temporal=temporal_stats,
-        radiomic=radiomic_stats,
+        radiomic_hdglio=radiomic_hd,
+        radiomic_deepbratumia=radiomic_db,
+        paired_hdglio=paired_hd,
+        paired_deepbratumia=paired_db,
     )
 
     stats_path = OUTPUT_DIR / "dataset_stats.json"
@@ -376,10 +637,16 @@ def main() -> None:
         json.dump(asdict(result), f, indent=2)
 
     print(f"\n{SECTION}")
-    print("✅ AUDIT COMPLETE")
-    print(f"   n_effective = {result.n_effective} paired examples")
-    print(f"   Patients    = {result.n_patients}")
-    print(f"   Saved stats → {stats_path}")
+    print("AUDIT COMPLETE")
+    print(
+        f"  HD-GLIO-AUTO  n_effective = {result.paired_hdglio.n_effective} "
+        f"({result.paired_hdglio.n_patients} patients)"
+    )
+    print(
+        f"  DeepBraTumIA  n_effective = {result.paired_deepbratumia.n_effective} "
+        f"({result.paired_deepbratumia.n_patients} patients)"
+    )
+    print(f"  Saved -> {stats_path}")
     print(SECTION)
 
 
