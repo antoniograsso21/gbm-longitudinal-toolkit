@@ -92,3 +92,35 @@ in milliseconds. The added complexity of a database outweighs any benefit.
 
 **When it would make sense**: multi-institutional dataset (n > 10,000),
 REST API serving, or concurrent multi-researcher access.
+
+---
+
+## 7. Intermediate Scans Without RANO as Additional Temporal Input
+
+**Observation from audit**: several patients have MRI scans with extracted
+radiomic features at timepoints that have no associated RANO label.
+Example — Patient-024 has imaging at `week-018` and `week-019` but RANO
+only at `week-015` and `week-031`. These intermediate scans are currently
+discarded because the label shift requires a RANO anchor at both t and t+1.
+
+**Potential value**: these unlabelled scans contain temporal signal about
+tumour evolution between two labelled timepoints. Including them could
+improve sequence-level representations, particularly for patients with
+sparse RANO labels but dense imaging.
+
+**Potential directions**:
+- Semi-supervised sequence modelling: use unlabelled intermediate scans
+  as additional GNN inputs within the temporal attention module, predicting
+  RANO only at labelled anchor points
+- Self-supervised pre-training on the full imaging sequence, fine-tuning
+  on labelled pairs only
+- Interpolation baseline: treat intermediate features as auxiliary inputs
+  to the delta feature computation (finer-grained rate-of-change estimates)
+
+**Prerequisite**: V1 must first establish baseline performance using
+labelled-only pairs. The unlabelled scan count and patient coverage
+should be quantified in a future audit extension.
+
+**Note**: this does not affect V1 design. The current approach (use only
+timepoints with RANO as sequence anchors) is the correct and defensible
+choice for the first version.
