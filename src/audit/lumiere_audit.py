@@ -32,7 +32,11 @@ RANO_MAPPING: dict[str, str] = {
     "PD": "Progressive",
 }
 
-NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "nan", "NaN", "N-A", ""]
+NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "N-A", "nan", "NaN", ""]
+
+# Columns to drop in preprocessing — confirmed 100% NaN in audit
+# Reader: populated in some PyRadiomics versions but empty in LUMIERE (all "N-A")
+COLS_TO_DROP_RADIOMIC: list[str] = ["Reader"]
 
 # Threshold for DeepBraTumIA viability as primary segmentation source.
 # Derived from: patients with >=3 valid RANO timepoints in the HD-GLIO-AUTO
@@ -69,6 +73,7 @@ class RanoStats:
     class_distribution_per_patient: dict[str, int]
     dominant_patients: dict[str, int]
     n_duplicate_timepoints: int     # (Patient, Date) conflicts resolved by keeping last
+    n_rano_timepoints_unmatched: int  # RANO dates absent from datacompleteness (format mismatch)
 
 
 @dataclass
@@ -93,6 +98,7 @@ class RadiomicStats:
     n_scans_with_partial_nan: int   # usable but at least one sequence has NaN features
     n_scans_fully_usable: int       # all required labels present, no all-NaN rows
     n_patients_fully_usable: int    # patients with >=1 fully usable scan
+    cols_all_nan: list[str]         # columns that are 100% NaN — drop in preprocessing
     n_high_skew_features: int
     top_skew: dict[str, float]
 
@@ -295,6 +301,20 @@ def _compute_paired_with_radiomics(
     all_pairs = _compute_consecutive_pairs(df)
     n_rano_only = len(all_pairs)
 
+    # Orphan check: RANO timepoints whose string key does not appear in complete_scans.
+    # Known cause: 'week-000' (plain) in RANO vs 'week-000-1' in radiomic/completeness CSVs
+    # for Patient-020, Patient-068, Patient-071. These are genuine source data inconsistencies.
+    radiomic_timepoints = {tp for _, tp in complete_scans}
+    rano_timepoints = set(rano_valid["Date"].unique())
+    orphan_tp = rano_timepoints - radiomic_timepoints
+    if orphan_tp:
+        orphan_rows = rano_valid[rano_valid["Date"].isin(orphan_tp)][[PATIENT_COL, "Date", "Rating_grouped"]]
+        print(
+            f"\n  Orphan RANO timepoints (no matching key in {source_name} CSV): {len(orphan_tp)}"
+        )
+        print(f"  These are excluded from n_effective — investigate before preprocessing:")
+        print(f"  {orphan_rows.to_string(index=False)}")
+
     def _both_have_features(row: pd.Series) -> bool:
         t_key = (row["patient"], _float_week_to_str(row["week_t"]))
         t1_key = (row["patient"], _float_week_to_str(row["week_t1"]))
@@ -372,6 +392,17 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     rano_valid = rano[~rano["Rating"].isin(RANO_EXCLUDE)].copy()
     rano_valid["Rating_grouped"] = rano_valid["Rating"].map(RANO_MAPPING)
 
+    # Drop rows with unrecognised Rating (e.g. literal string "None") — data entry artefacts.
+    unmapped_mask = rano_valid["Rating_grouped"].isna()
+    if unmapped_mask.any():
+        unmapped = rano_valid[unmapped_mask]
+        print(
+            f"\n[INFO] {unmapped_mask.sum()} row(s) with unrecognised Rating value "
+            f"(not in RANO_MAPPING, not in RANO_EXCLUDE) — dropped:"
+        )
+        print(unmapped[[PATIENT_COL, "Date", "Rating"]].to_string(index=False))
+        rano_valid = rano_valid[~unmapped_mask].copy()
+
     print(f"\nValid timepoints after Pre/Post-Op exclusion: {len(rano_valid)}")
     print(f"Patients with >=1 valid timepoint: {rano_valid[PATIENT_COL].nunique()}")
 
@@ -407,6 +438,63 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     else:
         print("\nNo duplicate (Patient, Date) entries")
 
+    # Cross-file consistency check: RANO timepoints vs datacompleteness.
+    # Three categories of mismatch, each with different severity and action:
+    #   1. FULLY DISJOINT patient: ALL RANO dates missing from completeness.
+    #      -> Likely temporal reference frame error. Exclude patient entirely.
+    #   2. PARTIAL mismatch: some RANO dates missing, some matching.
+    #      -> Likely transcription error on specific dates. Investigate manually.
+    #   3. Format mismatch: 'week-000' vs 'week-000-1'.
+    #      -> Resolvable in preprocessing by mapping where unambiguous.
+    completeness = _load_csv(CSV_COMPLETENESS)
+    dc_by_patient: dict[str, set[str]] = (
+        completeness.groupby(PATIENT_COL)[TIMEPOINT_COL_COMPLETENESS]
+        .apply(set)
+        .to_dict()
+    )
+    rano_by_patient: dict[str, set[str]] = (
+        rano_valid.groupby(PATIENT_COL)["Date"]
+        .apply(set)
+        .to_dict()
+    )
+
+    fully_disjoint: list[str] = []
+    partial_mismatch: dict[str, set[str]] = {}
+    n_rano_unmatched = 0
+
+    for patient, r_dates in rano_by_patient.items():
+        d_dates = dc_by_patient.get(patient, set())
+        extra = r_dates - d_dates
+        if not extra:
+            continue
+        n_rano_unmatched += len(extra)
+        if d_dates and r_dates.isdisjoint(d_dates):
+            fully_disjoint.append(patient)
+        elif extra:
+            partial_mismatch[patient] = extra
+
+    if fully_disjoint:
+        print(
+            f"\n[CRITICAL] Patients with ALL RANO timepoints absent from completeness "
+            f"({len(fully_disjoint)} patients — temporal reference frame error):"
+        )
+        for p in sorted(fully_disjoint):
+            print(f"  {p}: RANO={sorted(rano_by_patient[p])}")
+            print(f"       completeness={sorted(dc_by_patient.get(p, set()))}")
+        print("  -> Action: EXCLUDE these patients entirely. Document in paper Methods.")
+
+    if partial_mismatch:
+        print(
+            f"\n[WARNING] Patients with some RANO timepoints absent from completeness "
+            f"({len(partial_mismatch)} patients — possible transcription error):"
+        )
+        for p, extra in sorted(partial_mismatch.items()):
+            print(f"  {p}: unmatched RANO dates={sorted(extra)}")
+        print("  -> Action: investigate manually before preprocessing.")
+
+    if not fully_disjoint and not partial_mismatch:
+        print("\nAll RANO timepoints have a matching entry in datacompleteness.")
+
     stats = RanoStats(
         total_timepoints=len(rano),
         valid_timepoints=len(rano_valid),
@@ -416,6 +504,7 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
         class_distribution_per_patient=per_patient,
         dominant_patients=top5.to_dict(),
         n_duplicate_timepoints=n_dupes,
+        n_rano_timepoints_unmatched=n_rano_unmatched,
     )
     return rano_valid, stats
 
@@ -523,6 +612,15 @@ def audit_radiomic_features(
     print(f"Sequences: {n_sequences} | Labels: {len(labels_found)}")
     print(f"  -> Each scan generates {n_sequences}x{len(labels_found)} rows")
 
+    # Columns that are 100% NaN — must be dropped in preprocessing
+    all_nan_cols = feat.columns[feat.isnull().all()].tolist()
+    if all_nan_cols:
+        print(f"\nColumns 100% NaN (drop in preprocessing): {all_nan_cols}")
+        print(f"  Note: 'Reader' is populated by some PyRadiomics versions but")
+        print(f"  always empty in LUMIERE (stored as 'N-A' in the raw CSV).")
+    else:
+        print("\nNo columns are 100% NaN")
+
     # Skewness on original_* features only
     radiomic_cols = [c for c in feat.columns if c.startswith("original_")]
     skewness = feat[radiomic_cols].skew().abs()
@@ -555,6 +653,7 @@ def audit_radiomic_features(
         n_scans_with_partial_nan=n_partial_nan,
         n_scans_fully_usable=n_fully_usable,
         n_patients_fully_usable=n_patients_usable,
+        cols_all_nan=all_nan_cols,
         n_high_skew_features=int(len(high_skew)),
         top_skew=high_skew.head(10).round(2).to_dict(),
     )
