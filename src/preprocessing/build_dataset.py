@@ -24,12 +24,29 @@ Output:
 """
 
 import json
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from src.utils.lumiere_io import (
+    CSV_DEEPBRATUMIA,
+    CSV_RANO,
+    LABEL_ENCODING,
+    LABEL_PREFIX,
+    LOG_TRANSFORM_EXCLUDE,
+    PATIENTS_EXCLUDED,
+    RADIOMIC_PREFIX,
+    RANO_EXCLUDE,
+    RANO_MAPPING,
+    SKEW_THRESHOLD,
+    feature_suffix,
+    load_and_clean_rano,
+    load_csv,
+    parse_week,
+    radiomic_cols,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -37,71 +54,8 @@ import pandas as pd
 DATA_DIR = Path("data/raw/lumiere")
 OUTPUT_DIR = Path("data/processed")
 
-CSV_DEEPBRATUMIA = "LUMIERE-pyradiomics-deepbratumia-features.csv"
-CSV_RANO = "LUMIERE-ExpertRating-v202211.csv"
-
-# Patients excluded due to irreconcilable data quality issues identified in audit.
-# Patient-025: all RANO timepoints completely misaligned with imaging dates
-#              (temporal reference frame error in source data).
-# Document in paper Methods: "One patient (Patient-025) was excluded due to
-# irreconcilable temporal reference frame inconsistency between RANO assessment
-# dates and imaging acquisition dates."
-PATIENTS_EXCLUDED: frozenset[str] = frozenset({"Patient-025"})
-
-RANO_EXCLUDE: frozenset[str] = frozenset({"Pre-Op", "Post-Op", "Post-Op ", "Post-Op/PD"})
-
-RANO_MAPPING: dict[str, str] = {
-    "CR": "Response",
-    "PR": "Response",
-    "SD": "Stable",
-    "PD": "Progressive",
-}
-
-LABEL_ENCODING: dict[str, int] = {
-    "Progressive": 0,
-    "Stable": 1,
-    "Response": 2,
-}
-
-# Column prefix mapping: Label name -> short prefix for output column names
-LABEL_PREFIX: dict[str, str] = {
-    "Contrast-enhancing": "CE",
-    "Edema": "ED",
-    "Necrosis": "NC",
-    # HD-GLIO-AUTO labels (for ablation use)
-    "Non-enhancing": "NE",
-    "Contrast-enhancing ": "CE",  # trailing-space variant — defensive
-}
-
 # Columns to drop from radiomic CSVs before processing
 COLS_TO_DROP: list[str] = ["Reader", "Image", "Mask", "Label"]
-
-# Feature columns in the radiomic CSV
-RADIOMIC_PREFIX = "original_"
-
-# Features that can legitimately take negative values — exclude from log-transform.
-# These are either CT Hounsfield intensity-based (negative by definition)
-# or correlation/entropy features with bounded or signed domains.
-# Determined empirically from the raw DeepBraTumIA CSV (see audit notes).
-LOG_TRANSFORM_EXCLUDE: frozenset[str] = frozenset({
-    "original_firstorder_10Percentile",   # CT Hounsfield — can be negative
-    "original_firstorder_90Percentile",   # CT Hounsfield — can be negative
-    "original_firstorder_Mean",           # CT Hounsfield — can be negative
-    "original_firstorder_Median",         # CT Hounsfield — can be negative
-    "original_firstorder_Minimum",        # CT Hounsfield — always <= 0 for background
-    "original_firstorder_Skewness",       # defined on (-inf, +inf)
-    "original_glcm_ClusterShade",         # signed by definition
-    "original_glcm_Correlation",          # bounded [-1, 1] — log is semantically wrong
-    "original_glcm_DifferenceEntropy",    # can reach -epsilon due to float arithmetic
-    "original_glcm_Imc1",                 # bounded [-1, 0] — log is semantically wrong
-    "original_glcm_JointEntropy",         # can reach -epsilon due to float arithmetic
-    "original_glcm_SumEntropy",           # can reach -epsilon due to float arithmetic
-})
-
-SKEW_THRESHOLD = 2.0
-
-# String values treated as NaN
-NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "N-A", "nan", "NaN", ""]
 
 SECTION = "=" * 60
 
@@ -176,77 +130,6 @@ def _section(title: str) -> None:
     print(f"\n{SECTION}\n{title}\n{SECTION}")
 
 
-def _load_csv(filename: str) -> pd.DataFrame:
-    """Load a LUMIERE CSV treating common NA strings as NaN."""
-    return pd.read_csv(
-        DATA_DIR / filename,
-        na_values=NA_VALUES,
-        keep_default_na=True,
-        low_memory=False,
-    )
-
-
-def parse_week(date_str: str) -> float:
-    """
-    Parse LUMIERE week strings into a float ordinal.
-
-    Examples:
-        'week-044'   -> 44.0
-        'week-000-1' -> 0.1
-        'week-061-1' -> 61.1
-    """
-    m = re.match(r"week-(\d+)(?:-(\d+))?$", date_str)
-    if not m:
-        raise ValueError(f"Unexpected date format: '{date_str}'")
-    week = float(m.group(1))
-    if m.group(2):
-        week += float(m.group(2)) * 0.1
-    return week
-
-
-def _radiomic_cols(df: pd.DataFrame) -> list[str]:
-    """
-    Return radiomic feature column names.
-    Pre-pivot:  columns start with 'original_'
-    Post-pivot: columns contain 'original_' (prefixed with label_seq_)
-    """
-    return [c for c in df.columns if RADIOMIC_PREFIX in c]
-
-
-def _feature_suffix(col: str) -> str:
-    """
-    Strip label+sequence prefix from a post-pivot column name.
-    'CE_CT1_original_shape_Elongation' -> 'original_shape_Elongation'
-    """
-    parts = col.split("_", 2)
-    return parts[2] if len(parts) == 3 else col
-
-
-def _load_and_clean_rano() -> pd.DataFrame:
-    """
-    Load RANO labels, apply all exclusions, resolve duplicates.
-    Returns a clean DataFrame with columns [Patient, Timepoint, Rating_grouped].
-    Extracted as a pure function: both merge and label-shift use the same logic.
-    """
-    rano_raw = _load_csv(CSV_RANO)
-    rano_raw.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
-
-    rano = rano_raw[~rano_raw["Patient"].isin(PATIENTS_EXCLUDED)].copy()
-    rano = rano[~rano["Rating"].isin(RANO_EXCLUDE)].copy()
-    rano["Rating_grouped"] = rano["Rating"].map(RANO_MAPPING)
-    rano = rano[rano["Rating_grouped"].notna()].copy()
-
-    # Resolve Patient-042 week-010 duplicate: keep last occurrence (PD).
-    # See audit: two conflicting ratings for the same visit; PD is authoritative.
-    n_before = len(rano)
-    rano = rano.drop_duplicates(subset=["Patient", "Date"], keep="last").copy()
-    n_dupes = n_before - len(rano)
-    if n_dupes > 0:
-        print(f"  Resolved {n_dupes} duplicate (Patient, Date) entries — kept last rating")
-
-    return rano.rename(columns={"Date": "Timepoint"})[["Patient", "Timepoint", "Rating_grouped"]]
-
-
 # ---------------------------------------------------------------------------
 # Sub-step 1 — Pivot radiomic CSV
 # ---------------------------------------------------------------------------
@@ -264,7 +147,7 @@ def pivot_radiomic(csv_name: str) -> tuple[pd.DataFrame, PivotStats]:
     """
     _section(f"SUB-STEP 1 — PIVOT: {csv_name}")
 
-    raw = _load_csv(csv_name)
+    raw = load_csv(csv_name, DATA_DIR)
     print(f"Raw shape: {raw.shape}")
 
     raw = raw.rename(columns={"Time point": "Timepoint"})
@@ -313,7 +196,7 @@ def pivot_radiomic(csv_name: str) -> tuple[pd.DataFrame, PivotStats]:
 
     n_patients = pivoted["Patient"].nunique()
     n_timepoints = len(pivoted)
-    n_feat_cols = len(_radiomic_cols(pivoted))
+    n_feat_cols = len(radiomic_cols(pivoted))
 
     expected = len(labels_found) * len(seqs_found) * len(raw_rc)
     if n_feat_cols != expected:
@@ -344,7 +227,7 @@ def merge_rano(pivoted: pd.DataFrame) -> tuple[pd.DataFrame, MergeStats]:
     """
     _section("SUB-STEP 2 — MERGE WITH RANO LABELS")
 
-    rano = _load_and_clean_rano()
+    rano = load_and_clean_rano(DATA_DIR)
 
     n_radiomic = len(pivoted)
     n_rano = len(rano)
@@ -484,7 +367,7 @@ def handle_missing_and_transform(
     _section("SUB-STEP 5 — MISSING VALUES + LOG-TRANSFORM")
 
     paired = paired.copy()
-    rc = _radiomic_cols(paired)
+    rc = radiomic_cols(paired)
 
     # --- Part A: segmentation failure detection ---
     label_prefixes = sorted({col.split("_")[0] for col in rc})
@@ -525,13 +408,13 @@ def handle_missing_and_transform(
         print("✅ No patient lost all examples")
 
     # --- Part B: log-transform ---
-    rc = _radiomic_cols(paired)  # recompute after drop
+    rc = radiomic_cols(paired)  # recompute after drop
     skewness = paired[rc].skew().abs()
     high_skew_all = skewness[skewness > SKEW_THRESHOLD].index.tolist()
 
     high_skew = [
         c for c in high_skew_all
-        if _feature_suffix(c) not in LOG_TRANSFORM_EXCLUDE
+        if feature_suffix(c) not in LOG_TRANSFORM_EXCLUDE
     ]
     n_excluded = len(high_skew_all) - len(high_skew)
 
@@ -572,7 +455,7 @@ def compute_delta_features(paired: pd.DataFrame) -> tuple[pd.DataFrame, DeltaSta
     # Consolidate memory layout before the wide horizontal concat
     paired = paired.copy().sort_values(["Patient", "week_num"]).reset_index(drop=True)
 
-    rc = _radiomic_cols(paired)
+    rc = radiomic_cols(paired)
     paired["is_baseline_scan"] = ~paired.duplicated(subset="Patient", keep="first")
 
     delta_series = []

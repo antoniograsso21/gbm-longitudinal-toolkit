@@ -11,28 +11,29 @@ Usage:
 """
 
 import json
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import pandas as pd
+
+from src.utils.lumiere_io import (
+    CSV_COMPLETENESS,
+    CSV_DEEPBRATUMIA,
+    CSV_DEMOGRAPHICS,
+    CSV_HDGLIO,
+    CSV_RANO,
+    PATIENTS_EXCLUDED,
+    RANO_EXCLUDE,
+    RANO_MAPPING,
+    load_csv,
+    parse_week,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 DATA_DIR = Path("data/raw/lumiere")
 OUTPUT_DIR = Path("data/processed")
-
-RANO_EXCLUDE: frozenset[str] = frozenset({"Pre-Op", "Post-Op", "Post-Op ", "Post-Op/PD"})
-
-RANO_MAPPING: dict[str, str] = {
-    "CR": "Response",
-    "PR": "Response",
-    "SD": "Stable",
-    "PD": "Progressive",
-}
-
-NA_VALUES: list[str] = ["na", "n/a", "NA", "N/A", "N-A", "nan", "NaN", ""]
 
 # Columns to drop in preprocessing — confirmed 100% NaN in audit
 # Reader: populated in some PyRadiomics versions but empty in LUMIERE (all "N-A")
@@ -43,12 +44,6 @@ COLS_TO_DROP_RADIOMIC: list[str] = ["Reader"]
 # baseline audit = 55. Below this number the 3-node graph loses too many
 # patients to be credible vs the 2-node baseline.
 DEEPBRATUMIA_VIABILITY_THRESHOLD: int = 55
-
-# CSV filenames — centralised to avoid magic strings
-CSV_RANO = "LUMIERE-ExpertRating-v202211.csv"
-CSV_COMPLETENESS = "LUMIERE-datacompleteness.csv"
-CSV_HDGLIO = "LUMIERE-pyradiomics-hdglioauto-features.csv"
-CSV_DEEPBRATUMIA = "LUMIERE-pyradiomics-deepbratumia-features.csv"
 
 # Column name constants — different CSVs use different names for the same concept
 PATIENT_COL = "Patient"
@@ -129,32 +124,6 @@ class AuditResult:
 # ---------------------------------------------------------------------------
 def _section(title: str) -> None:
     print(f"\n{SECTION}\n{title}\n{SECTION}")
-
-
-def _load_csv(filename: str) -> pd.DataFrame:
-    """Load a LUMIERE CSV treating common NA strings as NaN."""
-    return pd.read_csv(DATA_DIR / filename, na_values=NA_VALUES, keep_default_na=True)
-
-
-def parse_week(date_str: str) -> float:
-    """
-    Parse LUMIERE week strings into a float ordinal.
-
-    Examples:
-        'week-044'   -> 44.0
-        'week-000-1' -> 0.1
-        'week-000-2' -> 0.2
-
-    Raises:
-        ValueError: if the string does not match the expected format.
-    """
-    m = re.match(r"week-(\d+)(?:-(\d+))?$", date_str)
-    if not m:
-        raise ValueError(f"Unexpected date format: '{date_str}'")
-    week = float(m.group(1))
-    if m.group(2):
-        week += float(m.group(2)) * 0.1
-    return week
 
 
 def _float_week_to_str(week_num: float) -> str:
@@ -351,7 +320,7 @@ def audit_raw_files() -> None:
 
     for filepath in csv_files:
         _section(f"  {filepath.name}")
-        df = _load_csv(filepath.name)
+        df = load_csv(filepath.name, DATA_DIR)
         print(f"Shape: {df.shape[0]} rows x {df.shape[1]} columns")
         print(f"\nColumns:\n{df.columns.tolist()}")
 
@@ -383,7 +352,7 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     """
     _section("RANO AUDIT — per patient")
 
-    rano = _load_csv(CSV_RANO)
+    rano = load_csv(CSV_RANO, DATA_DIR)
     rano.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
 
     print(f"Total timepoints in file: {len(rano)}")
@@ -446,7 +415,7 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
     #      -> Likely transcription error on specific dates. Investigate manually.
     #   3. Format mismatch: 'week-000' vs 'week-000-1'.
     #      -> Resolvable in preprocessing by mapping where unambiguous.
-    completeness = _load_csv(CSV_COMPLETENESS)
+    completeness = load_csv(CSV_COMPLETENESS, DATA_DIR)
     dc_by_patient: dict[str, set[str]] = (
         completeness.groupby(PATIENT_COL)[TIMEPOINT_COL_COMPLETENESS]
         .apply(set)
@@ -569,8 +538,8 @@ def audit_radiomic_features(
     """
     _section(f"RADIOMIC FEATURES AUDIT — {source_name}")
 
-    feat = _load_csv(csv_name)
-    completeness = _load_csv(CSV_COMPLETENESS)
+    feat = load_csv(csv_name, DATA_DIR)
+    completeness = load_csv(CSV_COMPLETENESS, DATA_DIR)
     print(f"Shape: {feat.shape}")
 
     # 1. Coverage vs datacompleteness
