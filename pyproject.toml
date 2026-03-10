@@ -2,13 +2,22 @@
 name = "gbm-longitudinal-toolkit"
 version = "0.1.0"
 description = "Longitudinal radiomics framework for GBM treatment response prediction"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "pandas==3.0.1",
     "dvc==3.66.1",
     "ruff==0.15.5",
-    "pyarrow>=23.0.1",
+    "pyarrow==23.0.1",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.extra-build-dependencies]
+torch-scatter = ["torch"]
+torch-geometric = ["torch"]
 
 [tool.ruff]
 line-length = 88
