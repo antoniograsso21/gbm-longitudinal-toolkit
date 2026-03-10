@@ -87,7 +87,7 @@ is insufficient before adding complexity.
 
 ## 6. Local SQLite Database for Data Exploration
 
-**Why deferred**: on n=212 examples, Pandas handles all operations in memory
+**Why deferred**: on n=231 examples, Pandas handles all operations in memory
 in milliseconds. The added complexity of a database outweighs any benefit.
 
 **When it would make sense**: multi-institutional dataset (n > 10,000),
@@ -124,3 +124,25 @@ should be quantified in a future audit extension.
 **Note**: this does not affect V1 design. The current approach (use only
 timepoints with RANO as sequence anchors) is the correct and defensible
 choice for the first version.
+
+---
+
+## 8. Archive — Rejected Approaches
+
+These were evaluated and explicitly rejected during V1 development.
+Keep this list to avoid re-evaluating them and to populate the paper
+Methods "discarded approaches" section.
+
+- **MINE** (Mutual Information Neural Estimation): unstable on small n,
+  high variance — replaced by Kraskov k-NN MI estimator.
+- **Direct Total Correlation**: high variance on n=64, no added value over Kraskov MI.
+- **t-SNE / UMAP as model input**: not reproducible between runs, not invertible.
+  UMAP allowed only for exploratory visualisation in the paper.
+- **PCA before GNN**: removes feature interpretability that makes clinical output meaningful.
+- **shift + log1p on bounded features** (glcm_Correlation, glcm_Imc1 bounded [-1,1]):
+  mathematically wrong — log-transforming changes the feature's meaning.
+  Replaced by explicit `LOG_TRANSFORM_EXCLUDE` list in `lumiere_io.py`.
+- **all-NaN detection for missing value drop**: too permissive — catches complete
+  segmentation failures but misses partial PyRadiomics failures on near-absent regions
+  (e.g. Patient-032 week-027: 40/107 NC features NaN, necrosis present but too small).
+  Replaced by any-NaN detection per label block.

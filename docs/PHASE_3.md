@@ -1,4 +1,4 @@
-# Phase 3 — Temporal GNN
+# Phase 3 — Temporal GNN + Interpretability
 
 ## Objective
 Build and evaluate the core model: a temporal GNN that processes a sequence
@@ -68,8 +68,8 @@ Irregular time handling: LUMIERE intervals are not fixed. Standard positional
 encodings assume fixed spacing. Instead, encode actual Δt:
 
 ```python
-def temporal_encoding(delta_t_weeks: Tensor, d_model: int) -> Tensor:
-    # Sinusoidal encoding with actual Δt as position (not step index)
+def temporal_encoding(interval_weeks: Tensor, d_model: int) -> Tensor:
+    # Sinusoidal encoding with actual interval_weeks as position (not step index)
     ...
 ```
 
@@ -88,7 +88,7 @@ class TumorTemporalGNN(nn.Module):
         return self.classifier(patient_embedding)
 ```
 
-**Loss**: CrossEntropyLoss with class weights (handles 77%/11%/12% imbalance)
+**Loss**: CrossEntropyLoss with class weights (handles 76%/11%/13% imbalance)
 **Optimiser**: AdamW | **Scheduler**: ReduceLROnPlateau | **Early stopping**: patience=20
 
 ---
@@ -101,11 +101,11 @@ class TumorTemporalGNN(nn.Module):
 | A2: No graph (LSTM) | GNN message passing | Does graph structure help? |
 | A3: No delta features | Δf columns | Does rate of change help? |
 | A4: No Δt encoding | Temporal positional encoding | Does irregular time matter? |
-| A5: delta_t only | All radiomic features | Leakage quantification |
+| A5: interval_weeks only | All radiomic features | Leakage quantification |
 | A6: 2-node GNN (HD-GLIO-AUTO) | Edema node | Does edema add signal? |
 
 A2 = Baseline 3 (LSTM) from Phase 2 — already computed.
-A5 = delta_t ablation from Phase 2 — already computed.
+A5 = interval_weeks ablation from Phase 2 — already computed.
 A6 is new: trains the same GNN architecture on HD-GLIO-AUTO graphs (2 nodes).
 Directly answers the scientific question of whether the 3rd node adds value.
 
@@ -113,11 +113,47 @@ Directly answers the scientific question of whether the 3rd node adds value.
 
 ## Interpretability
 
-For the paper:
-1. GATv2 attention weights per edge: which compartment relationships dominate?
-   (Necrosis→Edema? Enhancing→Necrosis?) stratified by disease stage
-2. Temporal attention weights: baseline scan vs recent scan importance
-3. Feature importance from Phase 1 feature selection: consistently selected features
+Interpretability is a first-class output of this phase. Three levels are required,
+each serving a different audience.
+
+### Level 1 — Global Feature Importance (for paper)
+Feature stability scores from Phase 1 (mRMR + Stability Selection) — already computed
+as part of feature selection. Report as ranked table grouped by region (CE/ED/NC)
+and feature family (shape, first-order, texture).
+
+### Level 2 — Attention Weights (for paper + clinical insight)
+Direct outputs of the attention mechanism — no additional libraries needed.
+
+- **Temporal attention**: which timepoint matters most? (baseline vs recent scan)
+  `temporal_weights: (n_patients, seq_len)` — averaged across heads
+- **GATv2 edge attention**: which inter-compartment relationship dominates?
+  `edge_weights: (n_timepoints, 6_edges, heads)`
+  Report mean per disease stage. Do Response patients attend more to CE↔ED?
+
+**Caution**: attention weights are not causal explanations. Report as
+"which input the model focused on", not "what caused the prediction".
+
+### Level 3 — Per-Patient Explanation via Integrated Gradients (for clinical output)
+Why IG over attention alone: attention tells you *where* the model looked;
+IG tells you *what* drove the prediction. IG satisfies the completeness axiom.
+
+```python
+from captum.attr import IntegratedGradients
+ig = IntegratedGradients(model)
+attributions = ig.attribute(inputs=patient_graphs, baselines=zero_graphs, target=pred_class)
+# Output per patient: top-5 features by attribution magnitude + most predictive timepoint
+```
+
+**File**: `src/interpretability/integrated_gradients.py`
+
+### Clinical Summary Output (integrated with Phase 4)
+At inference time each prediction is accompanied by:
+```
+Predicted: Progressive  |  CP set: {Progressive} (95% coverage)
+Top features: NC_T1_original_shape_MeshVolume (+), CE_FLAIR_firstorder_Mean (-)
+Most predictive timepoint: week-137 (most recent, attention weight=0.62)
+```
+**File**: `src/interpretability/clinical_summary.py`
 
 ---
 
@@ -130,5 +166,9 @@ For the paper:
 - [ ] Class-weighted loss implemented
 - [ ] Full ablation study (A1–A6) run and logged
 - [ ] Comparison table from Phase 2 completed with GNN results
-- [ ] Attention weight visualisation for paper
+- [ ] **Interpretability Level 1**: feature stability table saved to experiments/
+- [ ] **Interpretability Level 2**: attention weight figures for paper (temporal + edge)
+- [ ] **Interpretability Level 3**: Integrated Gradients implemented (Captum)
+      tested on ≥3 representative patients (one per RANO class)
+- [ ] **Clinical summary**: output format implemented (CP + IG + attention)
 - [ ] Random seeds fixed and logged

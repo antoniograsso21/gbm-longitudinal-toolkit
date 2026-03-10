@@ -22,7 +22,8 @@ Necrosis ←→ Contrast-enhancing
 
 Six directed edges (3 bidirectional pairs). Each edge carries:
 - `volumetric_ratio`: volume of source node / volume of target node
-- `delta_t_weeks`: temporal interval (monitored for leakage — see Phase 2 ablation)
+- `interval_weeks`: temporal interval (monitored for leakage — see Phase 2 ablation)
+  (named `interval_weeks`, not `delta_t_weeks` — avoids collision with `delta_` prefix)
 
 This design is directly motivated by the DeepBraTumIA segmentation labels
 and removes the main limitation of the original 2-node design. The triangular
@@ -33,7 +34,7 @@ the downstream GNN architecture.
 For each node (label) at timepoint T:
 ```
 x = [selected radiomic features (~20-30 after Phase 1 feature selection)
-     delta features (Δf normalised by delta_t_weeks)
+     delta features (Δf normalised by interval_weeks)
      is_baseline_scan (binary)
      time_from_diagnosis_weeks
      scan_index]
@@ -56,7 +57,7 @@ Builds a single `torch_geometric.data.Data` object from one row.
 @dataclass
 class GraphConfig:
     node_feature_cols: dict[str, list[str]]  # {label: [feature columns]}
-    edge_feature_cols: list[str]             # volumetric_ratio, delta_t_weeks
+    edge_feature_cols: list[str]             # volumetric_ratio, interval_weeks
     label_col: str
     label_mapping: dict[str, int]            # {"Progressive": 0, "Stable": 1, "Response": 2}
     node_order: list[str]                    # ["Necrosis", "Contrast-enhancing", "Edema"]
@@ -133,7 +134,7 @@ topology ablation in Phase 3.
 ```python
 assert all(g.x.shape[0] == 3 for g in graphs)          # 3 nodes
 assert all(g.edge_index.shape == (2, 12) for g in graphs)  # 6 bidirectional edges
-assert all(g.edge_attr.shape == (12, 2) for g in graphs)   # 2 edge features
+assert all(g.edge_attr.shape == (12, 2) for g in graphs)   # 12 edges, 2 features each
 assert all(g.y.shape == (1,) for g in graphs)
 ```
 
@@ -141,12 +142,14 @@ assert all(g.y.shape == (1,) for g in graphs)
 
 ## Definition of Done for Phase 1
 
+- [ ] `src/utils/lumiere_io.py` available (shared utilities — prerequisite)
 - [ ] GraphBuilder implemented and unit tested with synthetic data
 - [ ] 3-node topology verified (Necrosis, Contrast-enhancing, Edema)
 - [ ] Edge index correct for triangular bidirectional topology
 - [ ] DeltaGraphBuilder implemented and unit tested
 - [ ] TemporalSequence serialisation working (save/load roundtrip test)
 - [ ] Feature selection pipeline implemented (mRMR + Stability Selection)
+       run on training fold only — never on full dataset
 - [ ] `configs/graph_config.yaml` defined
 - [ ] All patient graphs saved and DVC tracked
 - [ ] HD-GLIO-AUTO graphs also built (2-node) for ablation in Phase 3

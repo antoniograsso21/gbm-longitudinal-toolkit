@@ -21,7 +21,7 @@ Raw CSVs (data/raw/lumiere/)
         │   Output: data/processed/dataset_stats.json
         │
         ▼
-[Step 0.2] PREPROCESSING  src/preprocessing/build_dataset.py ⏳ NEXT
+[Step 0.2] PREPROCESSING  src/preprocessing/build_dataset.py ✅ DONE
         │   Output: data/processed/dataset_paired.parquet
         │
         ▼
@@ -58,8 +58,13 @@ Raw CSVs (data/raw/lumiere/)
 - HD-GLIO-AUTO: 158 paired examples, 54 patients (reference only)
 
 **Temporal leakage:** low (Progressive=13.3w, Stable=13.3w, Response=16.0w)
-**Duplicate:** Patient-042 week-010 — SD and PD in raw file; PD kept (last), documented in Methods
-**High-skew features:** 67 with |skewness|>2 in DeepBraTumIA
+**Patient anomalies:**
+- Patient-025: ALL RANO timepoints misaligned with imaging dates — excluded entirely
+  (temporal reference frame error). Paper Methods: *"One patient (Patient-025) was excluded
+  due to irreconcilable temporal reference frame inconsistency."*
+- Patient-026, Patient-083: Rating='None' — auto-handled, zero valid timepoints retained
+- Patient-042 week-010: duplicate SD+PD — PD kept (last occurrence)
+**High-skew features:** 67 with |skewness|>2 in DeepBraTumIA (audit estimate on raw CSV)
 
 ---
 
@@ -101,40 +106,43 @@ For each patient, sort by week_num and shift label forward:
 - Drop pairs where t+1 has no usable radiomic features
 
 This is the most critical transformation. Verify: no patient's last timepoint
-appears in the output. n_effective should be 212.
+appears in the output. n_effective is 231 (verified after running build_dataset.py on real data).
 
 **Sub-step 4 — Add temporal features**
 
 Three columns per example:
-- `delta_t_weeks`: weeks between scan T and scan T+1
+- `interval_weeks`: weeks between scan T and scan T+1
+  (named `interval_weeks`, NOT `delta_t_weeks` — avoids collision with the
+  `delta_` prefix used by radiomic delta features)
 - `time_from_diagnosis_weeks`: week_num of scan T
-- `scan_index`: ordinal position for this patient (0-based)
+- `scan_index`: 0-based ordinal position for this patient
 
-**Sub-step 5 — Handle missing values**
+**Sub-step 5 — Handle missing values + log-transform**
 
-Strategy: scans with all-NaN for ALL labels are already excluded by the
-feature join in sub-step 3. Scans with partial-NaN (some sequences missing)
-are retained. For these scans, missing sequence features are imputed with
-the per-feature mean computed on the training fold only (inside CV).
+*Part A — Drop scans with segmentation failures:*
+A scan is dropped if ANY feature for a segmentation label is NaN.
+This catches both complete segmentation failures (all 107 NaN) and partial
+PyRadiomics failures on near-absent regions (e.g. Patient-032 week-027:
+40/107 NC features NaN). Using `all-NaN` would be too permissive.
+Result: 63 scans dropped. Patient-039 loses ALL examples — declared in paper.
 
-Document and report:
-- Number of partial-NaN scans retained
-- Which labels/sequences are most commonly missing
+*Part B — Log-transform high-skew features:*
+Apply `log1p` to features with |skewness| > 2.0, EXCLUDING features that
+can legitimately take negative values (`LOG_TRANSFORM_EXCLUDE` constant
+in `lumiere_io.py`): CT Hounsfield intensities and bounded features
+(glcm_Correlation, glcm_Imc1 etc. — applying log1p would change their meaning).
+Result: 514 features log-transformed, 30 excluded.
+Applied BEFORE delta computation so rates are on the log scale.
 
-**Sub-step 6 — Log-transform high-skew features**
-
-Apply log1p transform to the 67 features with |skewness|>2.
-Apply before normalization, after pivot. Column names unchanged.
-Document the feature list in `configs/log_transform_features.yaml`.
-
-**Sub-step 7 — Compute delta features**
+**Sub-step 6 — Compute delta features**
 
 For each radiomic feature f, for each patient:
 ```
-Δf_t = (f_t - f_{t-1}) / delta_t_weeks
+delta_f_t = (f_t - f_{t-1}) / interval_weeks
 ```
-- First scan per patient: Δf = 0, `is_baseline_scan = True`
-- Delta columns named: `delta_{label}_{sequence}_{feature_name}`
+- First scan per patient: delta_f = 0, `is_baseline_scan = True`
+- Delta columns named: `delta_{CE|ED|NC}_{sequence}_{feature_name}`
+- Built with a single `pd.concat` to avoid DataFrame fragmentation
 
 Normalization is NOT performed here — it lives inside cross-validation.
 
@@ -148,13 +156,16 @@ Normalization is NOT performed here — it lives inside cross-validation.
 **Script**: `src/audit/validate_dataset.py`
 
 ### What it verifies
-1. `n_effective == 212` (or document deviation with explanation)
+1. `n_effective == 231` (or document deviation with explanation)
 2. No patient's last timepoint appears as a training example
 3. No patient split contamination
 4. Label distribution matches audit report
 5. Delta features == 0 for all `is_baseline_scan == True` rows
-6. Log-transform applied: verify skewness < 2 for the 67 transformed features
+6. Log-transform applied: verify skewness < 2 for the 514 transformed features;
+   verify LOG_TRANSFORM_EXCLUDE features were NOT transformed
 7. No future information: target = label of NEXT timepoint, not current
+8. Patient-039 does NOT appear in the dataset
+9. `interval_weeks` column exists; no column named `delta_t_weeks`
 
 ---
 
@@ -163,12 +174,13 @@ Normalization is NOT performed here — it lives inside cross-validation.
 Unit tests in `tests/test_preprocessing.py`. Synthetic data only — no real CSVs in CI.
 
 Tests to cover:
-- `parse_week`: known input/output pairs including edge cases
+- `parse_week` (in lumiere_io.py): known input/output pairs including edge cases
+- `load_and_clean_rano`: Patient-025 excluded, Patient-042 deduped, unmapped filtered
 - `_compute_consecutive_pairs`: label shift on a 3-patient synthetic dataset
-- `_float_week_to_str`: round-trip with `parse_week`
-- Delta feature computation: Δf=0 on first scan, correct formula otherwise
-- Pivot logic: column naming on a minimal synthetic DeepBraTumIA CSV
-- Log-transform: skewness reduced below 2 on synthetic skewed data
+- Delta features: delta_f=0 on first scan, correct formula otherwise, no inf
+- Pivot logic: column naming CE/ED/NC on minimal synthetic CSV
+- Log-transform: LOG_TRANSFORM_EXCLUDE cols NOT transformed; others are
+- Missing value drop: any-NaN in label block → drop; other-label NaN → keep
 
 ---
 
@@ -183,17 +195,24 @@ Tests to cover:
 - [x] Partial-NaN scans tracked separately from all-NaN scans
 - [x] Temporal leakage assessed as low risk
 
-**Preprocessing (Step 0.2)**
-- [ ] `dataset_paired.parquet` generated and DVC tracked
-- [ ] 67 high-skew features log-transformed before normalization
-- [ ] Partial-NaN scan count documented
-- [ ] n_effective verified == 212 after join
+**Preprocessing (Step 0.2)** ✅
+- [x] `dataset_paired.parquet` generated: 231 rows, zero NaN, zero inf
+- [x] `preprocessing_report.json` saved
+- [x] any-NaN strategy applied: 63 scans dropped, Patient-039 loss documented
+- [x] LOG_TRANSFORM_EXCLUDE applied: 514 features transformed, 30 excluded
+- [x] interval_weeks naming (not delta_t_weeks)
+- [x] All integrity checks pass (label shift, delta baseline, no inf)
 
 **Validation (Step 0.3)**
 - [ ] Validation script passing all assertions
 - [ ] `validation_report.json` committed
 
+**Validation (Step 0.3)**
+- [ ] `src/utils/lumiere_io.py` written (shared utilities — prerequisite)
+- [ ] Validation script passing all 9 assertions
+- [ ] `validation_report.json` committed
+
 **Cross-cutting**
 - [ ] Unit tests passing in CI
-- [ ] Log-transform feature list in `configs/log_transform_features.yaml`
-- [ ] Missing sequence imputation strategy documented
+- [ ] interval_weeks-only ablation baseline recorded (Phase 2 prerequisite)
+- [ ] Patient-025 and Patient-039 exclusions documented in paper Methods draft

@@ -10,7 +10,7 @@ Establish a rigorous performance baseline before building the GNN.
 
 ## Why This Hierarchy is Mandatory
 
-On small datasets (n=212, 57 patients), gradient boosting is frequently
+On small datasets (n=231, 64 patients), gradient boosting is frequently
 competitive with or superior to deep learning. If the GNN does not beat
 XGBoost, that is an honest scientific result, not a failure.
 
@@ -40,7 +40,7 @@ cv = StratifiedGroupKFold(n_splits=5)
 # stratify = RANO class
 ```
 
-Never use KFold or train_test_split. n=57 patients, 5 folds → ~11-12 patients
+Never use KFold or train_test_split. n=64 patients, 5 folds → ~12-13 patients
 per fold. This is a small test set — mean ± std across folds is mandatory.
 
 **Normalization inside each fold only:**
@@ -60,8 +60,8 @@ MCC       — Matthews Correlation Coefficient (robust to imbalance)
 AUC       — one-vs-rest AUROC per class
 ```
 
-**Accuracy is never reported.** With 77% Progressive, a trivial classifier
-achieves 77% accuracy.
+**Accuracy is never reported.** With 76% Progressive, a trivial classifier
+achieves 76% accuracy.
 
 ---
 
@@ -101,10 +101,19 @@ early_stopping_rounds: 20
 
 RandomizedSearchCV with n_iter=30 inside each fold.
 
-**delta_t-only ablation** (mandatory):
-Train LightGBM on delta_t alone. If macro F1 > 0.33 (random baseline for
-3 balanced classes) → clinical workflow leakage confirmed, declare in paper.
-Log as experiment `baselines/delta_t_ablation`.
+**SHAP explanation** (mandatory — run after CV on best fold model):
+```python
+import shap
+explainer = shap.TreeExplainer(best_model)
+shap_values = explainer.shap_values(X_test)
+# Report: beeswarm plot + top-20 features by mean |SHAP|, grouped by region (CE/ED/NC)
+# Key check: interval_weeks SHAP rank — if top 5, leakage must be declared in paper
+```
+
+**interval_weeks-only ablation** (mandatory):
+Train LightGBM on interval_weeks alone (single feature). If macro F1 > 0.33
+(random baseline for 3 balanced classes) → clinical workflow leakage confirmed,
+declare in paper. Log as experiment `baselines/interval_weeks_ablation`.
 
 ---
 
@@ -150,7 +159,7 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 |------------------------|---------------------|-----|--------|--------|----------|
 | Logistic Regression    |                     |     |        |        |          |
 | LightGBM               |                     |     |        |        |          |
-| delta_t-only           |                     |     |        |        |          |
+| interval_weeks only    |                     |     |        |        |          |
 | LSTM                   |                     |     |        |        |          |
 | GNN 2-node (HD-GLIO)   |                     |     |        |        |          |
 | GNN 3-node (DeepBraTumIA) |                  |     |        |        |          |
@@ -161,9 +170,10 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 
 - [ ] Logistic Regression CV results logged to MLflow
 - [ ] LightGBM CV results logged to MLflow
-- [ ] delta_t-only ablation run and documented
+- [ ] interval_weeks-only ablation run and documented
 - [ ] LSTM CV results logged to MLflow
 - [ ] Normalization verified: scaler fit only on train fold
 - [ ] All random seeds fixed and logged
-- [ ] delta_t feature importance rank reported for LightGBM
+- [ ] SHAP global explanation for LightGBM saved (beeswarm + top-20 table)
+- [ ] interval_weeks SHAP rank reported (leakage check b)
 - [ ] Comparison table populated for B1, B2, B3

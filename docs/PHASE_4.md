@@ -23,12 +23,12 @@ Conformal Prediction (CP) is the correct tool here for three reasons:
    guarantees that the true label is in the prediction set at least (1-α)
    fraction of the time — provably, not approximately.
 
-3. **Small n compatible**: works on n=57 patients without architecture changes.
+3. **Small n compatible**: works on n=64 patients without architecture changes.
 
 Alternatives considered and rejected:
 - Monte Carlo Dropout: requires architecture changes, no coverage guarantee
 - Temperature scaling: calibrates probabilities only, no coverage guarantee
-- Bayesian Neural Network: intractable posterior, overkill on n=57
+- Bayesian Neural Network: intractable posterior, overkill on n=64
 
 ---
 
@@ -57,6 +57,33 @@ C(x) = {y : score(x, y) <= q_hat}
 - α=0.10 → 90% marginal coverage
 - α=0.05 → 95% marginal coverage
 - α=0.20 → 80% marginal coverage (smaller sets, clinical triage use)
+
+---
+
+## Clinical Output Integration (Phase 3 + Phase 4)
+
+The primary clinical deliverable combines uncertainty quantification with
+interpretability. At inference time, `src/interpretability/clinical_summary.py`
+combines CP prediction set + Integrated Gradients attributions + temporal attention:
+
+```
+Patient: Patient-XXX  |  Scan: week-NNN
+
+Predicted class:    Progressive
+CP set (90%):       {Progressive}
+CP set (95%):       {Progressive, Stable}
+
+Top driving features (Integrated Gradients):
+  [+] NC_T1_original_shape_MeshVolume      (+0.43)
+  [+] CE_FLAIR_original_firstorder_Mean    (+0.31)
+  [-] ED_T2_original_glcm_Correlation     (-0.18)
+
+Most predictive timepoint: week-NNN (weight=0.62 of 5 scans)
+```
+
+**Additional check**: do low-confidence predictions (set size > 1) correspond
+to diffuse IG attributions (no dominant feature)? This would indicate the model
+knows when it doesn't know — a clinically valuable property.
 
 ---
 
@@ -99,3 +126,5 @@ class ConformalResult:
 - [ ] Conditional coverage per RANO class checked and reported
 - [ ] Results logged to MLflow experiment `uncertainty/`
 - [ ] CP results integrated into comparison table from Phase 2/3
+- [ ] Clinical summary output implemented (CP + IG + attention weights)
+- [ ] CP/Interpretability alignment check: set size vs IG attribution entropy
