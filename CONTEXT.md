@@ -88,10 +88,13 @@ for patient in patients:
 LUMIERE is irregularly longitudinal: scan intervals are not fixed but determined
 by clinical decisions correlated with the target.
 
-Three mandatory controls (to be executed and reported in the paper):
-  a) Ablation study: model trained on interval_weeks only, no radiomics.
-  b) Feature importance of interval_weeks in the final model.
-  c) Temporal binning: early (0-8w) / mid (8-20w) / late (>20w)
+Four mandatory ablations (executed in Phase 2, reported in paper):
+  A) Radiomics features only (no temporal features)
+  B) Temporal features only (interval_weeks, scan_index, time_from_diagnosis_weeks)
+  C) Radiomics + temporal features
+  D) Radiomics + temporal + delta features (full model input)
+  If B ≈ C: weak radiomic signal — must declare in paper.
+  Additional: interval_weeks SHAP rank in final LightGBM model.
 
 ### 3. Temporal class imbalance (beyond standard class imbalance)
 Patients responding to therapy tend to have fewer scans and more distant follow-ups.
@@ -152,11 +155,14 @@ Output: RANO class + prediction set with calibrated confidence
 4. Three-node graph: Necrosis ↔ Contrast-enhancing ↔ Edema (triangular topology)
    Extensible: adding a fourth node requires zero changes to downstream architecture
 5. Delta-graph normalized by temporal interval: delta_feature / delta_weeks
-6. Metrics: macro F1, MCC, AUC per class — NEVER accuracy (imbalanced classes)
+6. Metrics: macro F1, MCC, AUROC per class, PR-AUC per class — NEVER accuracy
+   PR-AUC is primary for minority classes (Response 13%, Stable 11%) under heavy imbalance
 7. n_effective = 231 (DeepBraTumIA) — both t AND t+1 must have complete features
 8. Feature selection: mRMR + Stability Selection (τ=0.7, B=100 bootstrap)
    - Formula: max I(xi; y) - (1/|S|) * sum I(xi; xj∈S)
    - MI estimation: Kraskov estimator (continuous variables, small n)
+   - Stability measured both across bootstrap replicates AND across CV folds
+   - Features stable across both are the primary biological interpretation basis
 9. Discarded techniques: MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input
    Also: shift+log1p on bounded features (glcm_Correlation, glcm_Imc1 — domain [-1,1]);
    all-NaN detection for missing value drop (replaced by any-NaN per label block)
@@ -260,15 +266,17 @@ A4. Three nodes (Necrosis, Contrast-enhancing, Edema) capture the primary
 
 ## Scientific Claim
 Defensible formulation:
-"Open-source pipeline for longitudinal radiomics analysis in GBM with temporal
-graph modelling, distribution-free uncertainty quantification, and clinically
-interpretable predictions"
+"Reproducible open-source pipeline for longitudinal radiomics analysis in GBM
+with temporal bias control, calibrated uncertainty, and clinically interpretable
+predictions — the GNN is an exploratory modelling component, not the central claim."
 
 Notes:
 - Verify with systematic literature review before submission.
 - The real value is the replicable longitudinal pipeline, not the specific model.
 - Additional methodological contribution: Temporal MI Stability (consistency of ranking).
 - 2-node vs 3-node graph ablation is itself a contribution (graph topology sensitivity).
+- GNN architecture must remain lightweight (1 GAT layer) to avoid overparameterisation on n=231.
+- Mean sequence length ~3.6 timepoints limits sequence models to short-term dynamics (declare in Limitations).
 
 ---
 

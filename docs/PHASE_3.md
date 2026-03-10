@@ -89,6 +89,8 @@ class TumorTemporalGNN(nn.Module):
 ```
 
 **Loss**: CrossEntropyLoss with class weights (handles 76%/11%/13% imbalance)
+**Architecture constraint**: keep minimal on n=231 — 1 GATv2Conv layer preferred;
+2 layers only if ablation A1 shows meaningful gain. Avoid deep stacks.
 **Optimiser**: AdamW | **Scheduler**: ReduceLROnPlateau | **Early stopping**: patience=20
 
 ---
@@ -101,11 +103,11 @@ class TumorTemporalGNN(nn.Module):
 | A2: No graph (LSTM) | GNN message passing | Does graph structure help? |
 | A3: No delta features | Δf columns | Does rate of change help? |
 | A4: No Δt encoding | Temporal positional encoding | Does irregular time matter? |
-| A5: interval_weeks only | All radiomic features | Leakage quantification |
+| A5: temporal only (=B from Ph2) | All radiomic features | Leakage quantification |
 | A6: 2-node GNN (HD-GLIO-AUTO) | Edema node | Does edema add signal? |
 
 A2 = Baseline 3 (LSTM) from Phase 2 — already computed.
-A5 = interval_weeks ablation from Phase 2 — already computed.
+A5 = temporal-only ablation (B) from Phase 2 — already computed.
 A6 is new: trains the same GNN architecture on HD-GLIO-AUTO graphs (2 nodes).
 Directly answers the scientific question of whether the 3rd node adds value.
 
@@ -164,6 +166,7 @@ Most predictive timepoint: week-137 (most recent, attention weight=0.62)
 - [ ] TumorTemporalGNN full model implemented
 - [ ] CV training loop with early stopping and MLflow logging
 - [ ] Class-weighted loss implemented
+- [ ] PR-AUC reported per class
 - [ ] Full ablation study (A1–A6) run and logged
 - [ ] Comparison table from Phase 2 completed with GNN results
 - [ ] **Interpretability Level 1**: feature stability table saved to experiments/
@@ -172,3 +175,4 @@ Most predictive timepoint: week-137 (most recent, attention weight=0.62)
       tested on ≥3 representative patients (one per RANO class)
 - [ ] **Clinical summary**: output format implemented (CP + IG + attention)
 - [ ] Random seeds fixed and logged
+- [ ] Sequence length limitation (~3.6 tp/patient) declared in paper Limitations

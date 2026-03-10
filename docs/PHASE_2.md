@@ -55,9 +55,10 @@ X_test = scaler.transform(X_test)
 ## Metrics (all models, all folds)
 
 ```
-macro F1  — primary (imbalanced, all classes equal weight)
-MCC       — Matthews Correlation Coefficient (robust to imbalance)
-AUC       — one-vs-rest AUROC per class
+macro F1      — primary (imbalanced, all classes equal weight)
+MCC           — Matthews Correlation Coefficient (robust to imbalance)
+AUROC         — one-vs-rest per class
+PR-AUC        — one-vs-rest per class (primary for Response and Stable)
 ```
 
 **Accuracy is never reported.** With 76% Progressive, a trivial classifier
@@ -110,10 +111,15 @@ shap_values = explainer.shap_values(X_test)
 # Key check: interval_weeks SHAP rank — if top 5, leakage must be declared in paper
 ```
 
-**interval_weeks-only ablation** (mandatory):
-Train LightGBM on interval_weeks alone (single feature). If macro F1 > 0.33
-(random baseline for 3 balanced classes) → clinical workflow leakage confirmed,
-declare in paper. Log as experiment `baselines/interval_weeks_ablation`.
+**Temporal feature ablations A/B/C/D** (mandatory):
+Run LightGBM for each configuration:
+- A: radiomic features only (no interval_weeks, scan_index, time_from_diagnosis_weeks)
+- B: temporal features only (interval_weeks, scan_index, time_from_diagnosis_weeks)
+- C: radiomics + temporal
+- D: radiomics + temporal + delta features (full input)
+If macro F1(B) ≈ macro F1(C) → weak radiomic signal, declare in paper.
+If macro F1(B) > 0.33 → temporal leakage confirmed, declare in paper.
+Log all four as experiments `baselines/ablation_{A,B,C,D}`.
 
 ---
 
@@ -159,7 +165,9 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 |------------------------|---------------------|-----|--------|--------|----------|
 | Logistic Regression    |                     |     |        |        |          |
 | LightGBM               |                     |     |        |        |          |
-| interval_weeks only    |                     |     |        |        |          |
+| Radiomics only (A)     |                     |     |        |        |          |
+| Temporal only (B)      |                     |     |        |        |          |
+| Radiomics+temporal (C) |                     |     |        |        |          |
 | LSTM                   |                     |     |        |        |          |
 | GNN 2-node (HD-GLIO)   |                     |     |        |        |          |
 | GNN 3-node (DeepBraTumIA) |                  |     |        |        |          |
@@ -170,10 +178,11 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 
 - [ ] Logistic Regression CV results logged to MLflow
 - [ ] LightGBM CV results logged to MLflow
-- [ ] interval_weeks-only ablation run and documented
+- [ ] Temporal ablations A/B/C/D run and documented (leakage + radiomic signal checks)
 - [ ] LSTM CV results logged to MLflow
 - [ ] Normalization verified: scaler fit only on train fold
 - [ ] All random seeds fixed and logged
 - [ ] SHAP global explanation for LightGBM saved (beeswarm + top-20 table)
-- [ ] interval_weeks SHAP rank reported (leakage check b)
+- [ ] interval_weeks SHAP rank reported
+- [ ] PR-AUC reported per class alongside AUROC
 - [ ] Comparison table populated for B1, B2, B3
