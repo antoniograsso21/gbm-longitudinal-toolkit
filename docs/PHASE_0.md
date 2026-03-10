@@ -49,12 +49,13 @@ Raw CSVs (data/raw/lumiere/)
 - Partial-NaN scans tracked separately — included in model, handled in preprocessing
 
 **HD-GLIO-AUTO (reference):**
-- 175 scans with all-NaN features (vs 70 in DeepBraTumIA — markedly worse)
+- 4 scans with all-NaN features (vs 11 in DeepBraTumIA — markedly worse)
 - 424 fully usable scans, 89 patients
 
 **n_effective (both t AND t+1 must have usable scans):**
-- DeepBraTumIA: **212 paired examples, 57 patients**
+- DeepBraTumIA: **212 paired examples, 57 patients** (audit — before any-NaN drop)
   - Progressive=163 (77%), Stable=23 (11%), Response=26 (12%)
+  - After preprocessing any-NaN drop: **231 paired examples, 64 patients** (see Step 0.2)
 - HD-GLIO-AUTO: 158 paired examples, 54 patients (reference only)
 
 **Temporal leakage:** low (Progressive=13.3w, Stable=13.3w, Response=16.0w)
@@ -68,7 +69,7 @@ Raw CSVs (data/raw/lumiere/)
 
 ---
 
-## Step 0.2 — Preprocessing ⏳
+## Step 0.2 — Preprocessing ✅
 
 **Script**: `src/preprocessing/build_dataset.py`
 **Run**: `python -m src.preprocessing.build_dataset`
@@ -77,7 +78,7 @@ Raw CSVs (data/raw/lumiere/)
 
 **Sub-step 1 — Pivot the DeepBraTumIA CSV**
 
-Input: `LUMIERE-pyradiomics-deepbratumia-features.csv` (7188 rows)
+Input: `LUMIERE-pyradiomics-deepbratumia-features.csv` (7188 rows raw, 7092 after Patient-025 exclusion)
 Structure: 1 row per (patient × timepoint × sequence × label)
 
 Output: 1 row per (patient × timepoint)
@@ -103,10 +104,9 @@ Join on (Patient, Timepoint). Before joining:
 For each patient, sort by week_num and shift label forward:
 - target = RANO label of the NEXT timepoint
 - Drop the last timepoint of every patient (no future label)
-- Drop pairs where t+1 has no usable radiomic features
-
 This is the most critical transformation. Verify: no patient's last timepoint
-appears in the output. n_effective is 231 (verified after running build_dataset.py on real data).
+appears in the output. After label shift: 294 pairs across 65 patients (before
+segmentation failure drop in sub-step 5). Final n_effective=231 after sub-step 5.
 
 **Sub-step 4 — Add temporal features**
 
@@ -124,7 +124,8 @@ A scan is dropped if ANY feature for a segmentation label is NaN.
 This catches both complete segmentation failures (all 107 NaN) and partial
 PyRadiomics failures on near-absent regions (e.g. Patient-032 week-027:
 40/107 NC features NaN). Using `all-NaN` would be too permissive.
-Result: 63 scans dropped. Patient-039 loses ALL examples — declared in paper.
+Result: 63 scans dropped (NC: 62, CE: 17, ED: 11 — NC is the dominant failure).
+Patient-039 loses ALL examples — declared in paper.
 
 *Part B — Log-transform high-skew features:*
 Apply `log1p` to features with |skewness| > 2.0, EXCLUDING features that
@@ -204,11 +205,7 @@ Tests to cover:
 - [x] All integrity checks pass (label shift, delta baseline, no inf)
 
 **Validation (Step 0.3)**
-- [ ] Validation script passing all assertions
-- [ ] `validation_report.json` committed
-
-**Validation (Step 0.3)**
-- [ ] `src/utils/lumiere_io.py` written (shared utilities — prerequisite)
+- [ ] `src/utils/lumiere_io.py` written (shared utilities — prerequisite ✅ done)
 - [ ] Validation script passing all 9 assertions
 - [ ] `validation_report.json` committed
 
