@@ -1,0 +1,28 @@
+stages:
+  audit:
+    cmd: uv run -m src.audit.lumiere_audit
+    deps:
+      - data/raw/lumiere/
+      - src/audit/lumiere_audit.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/dataset_stats.json
+
+  preprocess:
+    cmd: uv run -m src.preprocessing.build_dataset
+    deps:
+      - data/raw/lumiere/
+      - src/preprocessing/build_dataset.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/dataset_paired.parquet
+      - data/processed/preprocessing_report.json
+
+  validate:
+    cmd: uv run -m src.audit.validate_dataset
+    deps:
+      - data/processed/dataset_paired.parquet
+      - src/audit/validate_dataset.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/validation_report.json

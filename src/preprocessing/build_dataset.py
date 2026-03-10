@@ -506,9 +506,12 @@ def _finalize(paired: pd.DataFrame) -> pd.DataFrame:
     """
     drop_cols = ["week_num", "Rating_grouped"]
     paired = paired.drop(columns=[c for c in drop_cols if c in paired.columns])
-    return paired.sort_values(
+    paired = paired.sort_values(
         ["Patient", "time_from_diagnosis_weeks"]
     ).reset_index(drop=True)
+    # Recalculate scan_index after any row drops so it is always 0-based and contiguous
+    paired["scan_index"] = paired.groupby("Patient").cumcount()
+    return paired
 
 
 # ---------------------------------------------------------------------------
@@ -525,8 +528,8 @@ def main() -> None:
     pivoted, pivot_stats = pivot_radiomic(CSV_DEEPBRATUMIA)
     merged, merge_stats = merge_rano(pivoted)
     paired, label_shift_stats = apply_label_shift(merged)
-    paired = add_temporal_features(paired)
     paired, missing_stats, n_high_skew = handle_missing_and_transform(paired)
+    paired = add_temporal_features(paired)
     paired, delta_stats = compute_delta_features(paired)
     paired = _finalize(paired)
 

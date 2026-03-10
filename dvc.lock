@@ -1,0 +1,68 @@
+schema: '2.0'
+stages:
+  audit:
+    cmd: uv run -m src.audit.lumiere_audit
+    deps:
+    - path: data/raw/lumiere/
+      hash: md5
+      md5: 272f9fe6de95946b7f62ec784105c77c.dir
+      size: 35366894
+      nfiles: 5
+    - path: src/audit/lumiere_audit.py
+      hash: md5
+      md5: 36aa8d37186fb84cd6b81828174e0ad8
+      size: 28866
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 793775a5f4f2db7edd04da26633d6568
+      size: 8480
+    outs:
+    - path: data/processed/dataset_stats.json
+      hash: md5
+      md5: 39fdb0575fbfe8309d5706c291db37e9
+      size: 3787
+  preprocess:
+    cmd: uv run -m src.preprocessing.build_dataset
+    deps:
+    - path: data/raw/lumiere/
+      hash: md5
+      md5: 272f9fe6de95946b7f62ec784105c77c.dir
+      size: 35366894
+      nfiles: 5
+    - path: src/preprocessing/build_dataset.py
+      hash: md5
+      md5: 4c69f85a8394c7eaa4f2781cba15ffaf
+      size: 21088
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 793775a5f4f2db7edd04da26633d6568
+      size: 8480
+    outs:
+    - path: data/processed/dataset_paired.parquet
+      hash: md5
+      md5: a5ebfb48a67dda271d56ae861dfbe930
+      size: 6849940
+    - path: data/processed/preprocessing_report.json
+      hash: md5
+      md5: 8bc99734c7f7b3fd34fd95e29c73527c
+      size: 1293
+  validate:
+    cmd: uv run -m src.audit.validate_dataset
+    deps:
+    - path: data/processed/dataset_paired.parquet
+      hash: md5
+      md5: a5ebfb48a67dda271d56ae861dfbe930
+      size: 6849940
+    - path: src/audit/validate_dataset.py
+      hash: md5
+      md5: a0ebd9f11eb8e75ff145f6d2bf7dca48
+      size: 13163
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 793775a5f4f2db7edd04da26633d6568
+      size: 8480
+    outs:
+    - path: data/processed/validation_report.json
+      hash: md5
+      md5: 24f6ee7bc76c5b73d8c0553fe595b8e3
+      size: 604
