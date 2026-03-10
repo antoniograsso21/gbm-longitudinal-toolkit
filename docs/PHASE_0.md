@@ -25,7 +25,7 @@ Raw CSVs (data/raw/lumiere/)
         │   Output: data/processed/dataset_paired.parquet
         │
         ▼
-[Step 0.3] VALIDATION     src/audit/validate_dataset.py      ⏳ TODO
+[Step 0.3] VALIDATION     src/audit/validate_dataset.py      ✅ DONE
             Output: data/processed/validation_report.json
 ```
 
@@ -46,7 +46,7 @@ Raw CSVs (data/raw/lumiere/)
 - 599 scans in CSV; 39 absent (extraction failed — label not found or ROI too small)
 - 70 scans with all-NaN features (segmentation silent failure)
 - 529 fully usable scans, 91 patients
-- Partial-NaN scans tracked separately — included in model, handled in preprocessing
+- Partial-NaN scans tracked in audit for completeness; dropped in preprocessing (see Step 0.2 sub-step 5 — any-NaN strategy)
 
 **HD-GLIO-AUTO (reference):**
 - 4 scans with all-NaN features (vs 11 in DeepBraTumIA — markedly worse)
@@ -108,7 +108,11 @@ This is the most critical transformation. Verify: no patient's last timepoint
 appears in the output. After label shift: 294 pairs across 65 patients (before
 segmentation failure drop in sub-step 5). Final n_effective=231 after sub-step 5.
 
-**Sub-step 4 — Add temporal features**
+**Sub-step 4 — Handle missing values + log-transform**
+
+Moved before temporal features — see sub-step 5 below.
+
+**Sub-step 4b — Add temporal features**
 
 Three columns per example:
 - `interval_weeks`: weeks between scan T and scan T+1
@@ -118,6 +122,8 @@ Three columns per example:
 - `scan_index`: 0-based ordinal position for this patient
 
 **Sub-step 5 — Handle missing values + log-transform**
+
+*(Note: in the actual pipeline, sub-step 5 runs BEFORE sub-step 4 so that `scan_index` is assigned after the drop and remains 0-based and contiguous.)*
 
 *Part A — Drop scans with segmentation failures:*
 A scan is dropped if ANY feature for a segmentation label is NaN.
@@ -142,6 +148,7 @@ For each radiomic feature f, for each patient:
 delta_f_t = (f_t - f_{t-1}) / interval_weeks
 ```
 - First scan per patient: delta_f = 0, `is_baseline_scan = True`
+- `is_baseline_scan` is included as a node feature in the GNN (via `GraphConfig.scalar_node_features`) so the model can distinguish true zero-delta from biological zero-change
 - Delta columns named: `delta_{CE|ED|NC}_{sequence}_{feature_name}`
 - Built with a single `pd.concat` to avoid DataFrame fragmentation
 
@@ -149,6 +156,31 @@ Normalization is NOT performed here — it lives inside cross-validation.
 
 ### Output
 `data/processed/dataset_paired.parquet`
+
+### Output schema
+
+```
+dataset_paired.parquet
+
+Patient, Timepoint                     — identifiers
+target, target_encoded                 — RANO(t+1), integer-encoded
+
+temporal_features (3):
+    interval_weeks                     — weeks T → T+1
+    time_from_diagnosis_weeks          — week_num of scan T
+    scan_index                         — 0-based ordinal per patient
+
+radiomic_features (1284):
+    {NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feature_name}
+
+delta_features (1284):
+    delta_{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feature_name}
+    (= Δlog(f) / interval_weeks — log-scale growth rate)
+
+flags (1):
+    is_baseline_scan                   — True for first scan per patient
+```
+
 
 ---
 
@@ -158,15 +190,17 @@ Normalization is NOT performed here — it lives inside cross-validation.
 
 ### What it verifies
 1. `n_effective == 231` (or document deviation with explanation)
-2. No patient's last timepoint appears as a training example
-3. No patient split contamination
-4. Label distribution matches audit report
+2. `scan_index` is 0-based and contiguous per patient (label shift integrity)
+3. No NaN or inf in numeric columns
+4. Label distribution matches expected (Progressive=175, Stable=25, Response=31)
 5. Delta features == 0 for all `is_baseline_scan == True` rows
-6. Log-transform applied: verify skewness < 2 for the 514 transformed features;
-   verify LOG_TRANSFORM_EXCLUDE features were NOT transformed
-7. No future information: target = label of NEXT timepoint, not current
+6. Log-transform applied correctly: transformed cols have no negative values; excluded cols not transformed
+7. No future information: `interval_weeks > 0` for all rows
 8. Patient-039 does NOT appear in the dataset
 9. `interval_weeks` column exists; no column named `delta_t_weeks`
+10. No duplicate (Patient, Timepoint) pairs
+11. `time_from_diagnosis_weeks` strictly increasing per patient
+12. Survival bias check: `time_from_diagnosis_weeks`, RANO class, and `scans_per_patient` compared across dropped vs retained (informational)
 
 ---
 
@@ -205,9 +239,9 @@ Tests to cover:
 - [x] All integrity checks pass (label shift, delta baseline, no inf)
 
 **Validation (Step 0.3)**
-- [ ] `src/utils/lumiere_io.py` written (shared utilities — prerequisite ✅ done)
-- [ ] Validation script passing all 9 assertions
-- [ ] `validation_report.json` committed
+- [x] `src/utils/lumiere_io.py` written (shared utilities)
+- [x] Validation script passing all assertions (10 hard + 1 warn)
+- [x] `validation_report.json` committed
 
 **Cross-cutting**
 - [ ] Unit tests passing in CI

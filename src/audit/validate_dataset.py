@@ -218,6 +218,23 @@ def check_patient_039_absent(df: pd.DataFrame) -> str:
                    f"{PATIENT_LOST} found in dataset")
 
 
+def check_no_duplicate_pairs(df: pd.DataFrame) -> str:
+    dupes = df.duplicated(subset=["Patient", "Timepoint"]).sum()
+    return _result("no_duplicate_pairs", dupes == 0,
+                   f"{dupes} duplicate (Patient, Timepoint) rows found")
+
+
+def check_week_monotonic(df: pd.DataFrame) -> str:
+    """time_from_diagnosis_weeks must be strictly increasing per patient."""
+    violations = []
+    for pat, grp in df.groupby("Patient"):
+        weeks = grp.sort_values("scan_index")["time_from_diagnosis_weeks"].tolist()
+        if weeks != sorted(set(weeks)):
+            violations.append(pat)
+    return _result("week_monotonic", len(violations) == 0,
+                   f"non-monotonic weeks for: {violations}")
+
+
 def check_column_names(df: pd.DataFrame) -> str:
     has_interval = "interval_weeks" in df.columns
     has_old_name = "delta_t_weeks" in df.columns
@@ -245,6 +262,12 @@ def check_survival_bias(df: pd.DataFrame) -> tuple[str, dict[str, float]]:
     means = df.groupby("target")["time_from_diagnosis_weeks"].mean()
     spread = means.max() - means.min()
 
+    scans_per_patient = df.groupby("Patient")["scan_index"].max() + 1
+    print(f"\n  scans_per_patient by class (mean):")
+    for cls in ["Progressive", "Stable", "Response"]:
+        pts = df[df["target"] == cls]["Patient"].unique()
+        m = scans_per_patient[scans_per_patient.index.isin(pts)].mean()
+        print(f"    {cls}: {m:.1f}")
     print(f"\n  time_from_diagnosis_weeks by class:")
     for cls in ["Progressive", "Stable", "Response"]:
         if cls in df["target"].values:
@@ -291,6 +314,8 @@ def main() -> None:
     results["7_no_future_info"] = check_no_future_info(df)
     results["8_patient_039_absent"] = check_patient_039_absent(df)
     results["9_column_names"] = check_column_names(df)
+    results["10_no_duplicate_pairs"] = check_no_duplicate_pairs(df)
+    results["11_week_monotonic"] = check_week_monotonic(df)
 
     _section("Survival bias check (informational)")
     results["10_survival_bias"], survival_summary = check_survival_bias(df)
