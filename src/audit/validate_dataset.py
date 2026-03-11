@@ -30,6 +30,8 @@ import numpy as np
 import pandas as pd
 
 from src.utils.lumiere_io import (
+    SECTION,
+    print_section,
     CSV_DEEPBRATUMIA,
     LABEL_ENCODING,
     LOG_TRANSFORM_EXCLUDE,
@@ -53,9 +55,6 @@ EXPECTED_N_EFFECTIVE = 231
 EXPECTED_CLASS_DIST = {"Progressive": 175, "Stable": 25, "Response": 31}
 PATIENT_LOST = "Patient-039"
 
-SECTION = "=" * 60
-
-
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -73,10 +72,6 @@ class ValidationReport:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _section(title: str) -> None:
-    print(f"\n{SECTION}\n{title}\n{SECTION}")
-
-
 def _result(label: str, ok: bool, msg: str = "") -> str:
     status = "PASS" if ok else f"FAIL: {msg}"
     icon = "✅" if ok else "❌"
@@ -292,7 +287,7 @@ def check_survival_bias(df: pd.DataFrame) -> tuple[str, dict[str, float]]:
 # ---------------------------------------------------------------------------
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    _section("LUMIERE Dataset Validation — Phase 0, Step 0.3")
+    print_section("LUMIERE Dataset Validation — Phase 0, Step 0.3")
 
     if not PARQUET_PATH.exists():
         print(f"ERROR: {PARQUET_PATH} not found. Run build_dataset.py first.")
@@ -304,7 +299,7 @@ def main() -> None:
 
     results: dict[str, str] = {}
 
-    _section("Running assertions")
+    print_section("Running assertions")
     results["1_n_effective"] = check_n_effective(df)
     results["2_no_last_timepoint"] = check_no_last_timepoint(df)
     results["3_no_nan_inf"] = check_no_nan_inf(df)
@@ -317,7 +312,7 @@ def main() -> None:
     results["10_no_duplicate_pairs"] = check_no_duplicate_pairs(df)
     results["11_week_monotonic"] = check_week_monotonic(df)
 
-    _section("Survival bias check (informational)")
+    print_section("Survival bias check (informational)")
     results["10_survival_bias"], survival_summary = check_survival_bias(df)
 
     # Summary
@@ -325,7 +320,7 @@ def main() -> None:
     failed = sum(1 for v in results.values() if v.startswith("FAIL"))
     warnings = sum(1 for v in results.values() if v.startswith("WARN"))
 
-    _section("SUMMARY")
+    print_section("SUMMARY")
     print(f"  PASS:    {passed}")
     print(f"  FAIL:    {failed}")
     print(f"  WARN:    {warnings}")

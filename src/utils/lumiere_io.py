@@ -217,3 +217,80 @@ def feature_suffix(col: str) -> str:
     """
     parts = col.split("_", 2)
     return parts[2] if len(parts) == 3 and parts[2].startswith(RADIOMIC_PREFIX) else col
+
+# ---------------------------------------------------------------------------
+# Console utilities (shared across audit, preprocessing, validate)
+# ---------------------------------------------------------------------------
+SECTION: str = "=" * 60
+
+
+def print_section(title: str) -> None:
+    """Print a section header — consistent across all scripts."""
+    print(f"\n{SECTION}\n{title}\n{SECTION}")
+
+
+# ---------------------------------------------------------------------------
+# Week string utilities
+# ---------------------------------------------------------------------------
+
+def float_week_to_str(week_num: float) -> str:
+    """
+    Convert a float week ordinal back to the LUMIERE string format.
+
+    Examples:
+        44.0 -> 'week-044'
+        0.1  -> 'week-000-1'
+    """
+    base = int(week_num)
+    suffix = round((week_num - base) * 10)
+    if suffix > 0:
+        return f"week-{base:03d}-{suffix}"
+    return f"week-{base:03d}"
+
+
+def add_week_column(
+    df: "pd.DataFrame",
+    date_col: str = "Date",
+    patient_col: str = "Patient",
+) -> "pd.DataFrame":
+    """Return a copy of df with a 'week_num' float column parsed from date_col."""
+    import pandas as _pd  # local import — lumiere_io has no top-level pandas dep
+    df = df.copy()
+    df["week_num"] = df[date_col].apply(parse_week)
+    return df.sort_values([patient_col, "week_num"])
+
+
+def compute_consecutive_pairs(
+    df: "pd.DataFrame",
+    patient_col: str = "Patient",
+) -> "pd.DataFrame":
+    """
+    For each patient build consecutive (t, t+1) pairs from a week-sorted DataFrame.
+
+    Returns a DataFrame with columns:
+        patient, week_t, week_t1, delta_weeks, rating_t, label_t1
+
+    Raises:
+        ValueError: if any delta_weeks < 0 (ordering inconsistency).
+    """
+    import pandas as _pd
+    records = []
+    for patient, group in df.groupby(patient_col):
+        rows = group.reset_index(drop=True)
+        for i in range(len(rows) - 1):
+            delta = rows.iloc[i + 1]["week_num"] - rows.iloc[i]["week_num"]
+            if delta < 0:
+                raise ValueError(
+                    f"Negative delta_t ({delta:.1f}) for {patient} "
+                    f"at weeks {rows.iloc[i]['week_num']} -> "
+                    f"{rows.iloc[i+1]['week_num']}."
+                )
+            records.append({
+                "patient": patient,
+                "week_t": rows.iloc[i]["week_num"],
+                "week_t1": rows.iloc[i + 1]["week_num"],
+                "delta_weeks": delta,
+                "rating_t": rows.iloc[i]["Rating_grouped"],
+                "label_t1": rows.iloc[i + 1]["Rating_grouped"],
+            })
+    return _pd.DataFrame(records)

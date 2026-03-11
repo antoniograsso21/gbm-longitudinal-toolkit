@@ -31,6 +31,8 @@ import numpy as np
 import pandas as pd
 
 from src.utils.lumiere_io import (
+    SECTION,
+    print_section,
     CSV_DEEPBRATUMIA,
     CSV_RANO,
     LABEL_ENCODING,
@@ -56,9 +58,6 @@ OUTPUT_DIR = Path("data/processed")
 
 # Columns to drop from radiomic CSVs before processing
 COLS_TO_DROP: list[str] = ["Reader", "Image", "Mask", "Label"]
-
-SECTION = "=" * 60
-
 
 # ---------------------------------------------------------------------------
 # Result dataclasses
@@ -126,10 +125,6 @@ class PreprocessingReport:
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
-def _section(title: str) -> None:
-    print(f"\n{SECTION}\n{title}\n{SECTION}")
-
-
 # ---------------------------------------------------------------------------
 # Sub-step 1 — Pivot radiomic CSV
 # ---------------------------------------------------------------------------
@@ -145,7 +140,7 @@ def pivot_radiomic(csv_name: str) -> tuple[pd.DataFrame, PivotStats]:
     Missing combinations (e.g. Necrosis absent for one scan) produce NaN
     in the corresponding columns. These are handled in sub-step 5.
     """
-    _section(f"SUB-STEP 1 — PIVOT: {csv_name}")
+    print_section(f"SUB-STEP 1 — PIVOT: {csv_name}")
 
     raw = load_csv(csv_name, DATA_DIR)
     print(f"Raw shape: {raw.shape}")
@@ -225,7 +220,7 @@ def merge_rano(pivoted: pd.DataFrame) -> tuple[pd.DataFrame, MergeStats]:
     Inner join pivoted radiomic features with valid RANO labels.
     Only timepoints with BOTH features AND a valid RANO label are retained.
     """
-    _section("SUB-STEP 2 — MERGE WITH RANO LABELS")
+    print_section("SUB-STEP 2 — MERGE WITH RANO LABELS")
 
     rano = load_and_clean_rano(DATA_DIR)
 
@@ -266,7 +261,7 @@ def apply_label_shift(merged: pd.DataFrame) -> tuple[pd.DataFrame, LabelShiftSta
     This is the most critical transformation: the model must predict future
     state, not current state (which would be clinically useless).
     """
-    _section("SUB-STEP 3 — LABEL SHIFT")
+    print_section("SUB-STEP 3 — LABEL SHIFT")
 
     merged = merged.copy()
     merged["week_num"] = merged["Timepoint"].apply(parse_week)
@@ -329,7 +324,7 @@ def add_temporal_features(paired: pd.DataFrame) -> pd.DataFrame:
     All three are both model features and leakage monitoring variables.
     Their importance in the final model MUST be reported in the paper.
     """
-    _section("SUB-STEP 4 — TEMPORAL FEATURES")
+    print_section("SUB-STEP 4 — TEMPORAL FEATURES")
 
     paired = paired.copy()
     paired["time_from_diagnosis_weeks"] = paired["week_num"]
@@ -364,7 +359,7 @@ def handle_missing_and_transform(
     Both parts are in one function because the drop must happen before
     the skewness calculation (dropped rows would bias the skew estimate).
     """
-    _section("SUB-STEP 5 — MISSING VALUES + LOG-TRANSFORM")
+    print_section("SUB-STEP 5 — MISSING VALUES + LOG-TRANSFORM")
 
     paired = paired.copy()
     rc = radiomic_cols(paired)
@@ -450,7 +445,7 @@ def compute_delta_features(paired: pd.DataFrame) -> tuple[pd.DataFrame, DeltaSta
     For the first scan of each patient (no t-1): delta_f = 0, is_baseline_scan = True.
     All delta columns are built via pd.concat to avoid DataFrame fragmentation.
     """
-    _section("SUB-STEP 6 — DELTA FEATURES")
+    print_section("SUB-STEP 6 — DELTA FEATURES")
 
     # Consolidate memory layout before the wide horizontal concat
     paired = paired.copy().sort_values(["Patient", "week_num"]).reset_index(drop=True)
@@ -554,7 +549,7 @@ def main() -> None:
     with open(report_path, "w") as f:
         json.dump(asdict(report), f, indent=2)
 
-    _section("PREPROCESSING COMPLETE")
+    print_section("PREPROCESSING COMPLETE")
     print(f"  Output shape:  {paired.shape[0]} rows x {paired.shape[1]} columns")
     print(f"  Patients:      {paired['Patient'].nunique()}")
     print(f"  Target dist:   {paired['target'].value_counts().to_dict()}")

@@ -17,6 +17,11 @@ from pathlib import Path
 import pandas as pd
 
 from src.utils.lumiere_io import (
+    SECTION,
+    print_section,
+    float_week_to_str,
+    add_week_column,
+    compute_consecutive_pairs,
     CSV_COMPLETENESS,
     CSV_DEEPBRATUMIA,
     CSV_DEMOGRAPHICS,
@@ -51,9 +56,6 @@ TIMEPOINT_COL_RADIOMIC = "Time point"     # radiomic CSVs
 TIMEPOINT_COL_COMPLETENESS = "Timepoint"  # datacompleteness CSV
 LABEL_COL = "Label name"
 SEQUENCE_COL = "Sequence"
-
-SECTION = "=" * 60
-
 
 # ---------------------------------------------------------------------------
 # Result dataclasses — typed, serialisable, testable
@@ -122,63 +124,6 @@ class AuditResult:
 # ---------------------------------------------------------------------------
 # Private utilities — pure functions, no side effects
 # ---------------------------------------------------------------------------
-def _section(title: str) -> None:
-    print(f"\n{SECTION}\n{title}\n{SECTION}")
-
-
-def _float_week_to_str(week_num: float) -> str:
-    """
-    Convert a float week ordinal back to the LUMIERE string format.
-
-    Examples:
-        44.0 -> 'week-044'
-        0.1  -> 'week-000-1'
-    """
-    base = int(week_num)
-    suffix = round((week_num - base) * 10)
-    if suffix > 0:
-        return f"week-{base:03d}-{suffix}"
-    return f"week-{base:03d}"
-
-
-def _add_week_column(df: pd.DataFrame, date_col: str = "Date") -> pd.DataFrame:
-    """Return a copy of df with a 'week_num' float column parsed from date_col."""
-    df = df.copy()
-    df["week_num"] = df[date_col].apply(parse_week)
-    return df.sort_values([PATIENT_COL, "week_num"])
-
-
-def _compute_consecutive_pairs(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each patient build consecutive (t, t+1) pairs from a week-sorted DataFrame.
-
-    Returns a DataFrame with columns:
-        patient, week_t, week_t1, delta_weeks, rating_t, label_t1
-
-    Raises:
-        ValueError: if any delta_weeks < 0 (ordering inconsistency).
-    """
-    records = []
-    for patient, group in df.groupby(PATIENT_COL):
-        rows = group.reset_index(drop=True)
-        for i in range(len(rows) - 1):
-            delta = rows.iloc[i + 1]["week_num"] - rows.iloc[i]["week_num"]
-            if delta < 0:
-                raise ValueError(
-                    f"Negative delta_t ({delta:.1f}) for {patient} "
-                    f"at weeks {rows.iloc[i]['week_num']} -> {rows.iloc[i+1]['week_num']}."
-                )
-            records.append({
-                "patient": patient,
-                "week_t": rows.iloc[i]["week_num"],
-                "week_t1": rows.iloc[i + 1]["week_num"],
-                "delta_weeks": delta,
-                "rating_t": rows.iloc[i]["Rating_grouped"],
-                "label_t1": rows.iloc[i + 1]["Rating_grouped"],
-            })
-    return pd.DataFrame(records)
-
-
 def _analyse_scan_completeness(
     feat: pd.DataFrame,
     required_labels: list[str],
@@ -266,8 +211,8 @@ def _compute_paired_with_radiomics(
     2. Scan at t  has complete features (graph construction at t)
     3. Scan at t+1 has complete features (delta feature computation needs t+1)
     """
-    df = _add_week_column(rano_valid)
-    all_pairs = _compute_consecutive_pairs(df)
+    df = add_week_column(rano_valid)
+    all_pairs = compute_consecutive_pairs(df)
     n_rano_only = len(all_pairs)
 
     # Orphan check: RANO timepoints whose string key does not appear in complete_scans.
@@ -285,8 +230,8 @@ def _compute_paired_with_radiomics(
         print(f"  {orphan_rows.to_string(index=False)}")
 
     def _both_have_features(row: pd.Series) -> bool:
-        t_key = (row["patient"], _float_week_to_str(row["week_t"]))
-        t1_key = (row["patient"], _float_week_to_str(row["week_t1"]))
+        t_key = (row["patient"], float_week_to_str(row["week_t"]))
+        t1_key = (row["patient"], float_week_to_str(row["week_t1"]))
         return t_key in complete_scans and t1_key in complete_scans
 
     usable = all_pairs[all_pairs.apply(_both_have_features, axis=1)]
@@ -319,7 +264,7 @@ def audit_raw_files() -> None:
     large_csvs = {CSV_HDGLIO, CSV_DEEPBRATUMIA}
 
     for filepath in csv_files:
-        _section(f"  {filepath.name}")
+        print_section(f"  {filepath.name}")
         df = load_csv(filepath.name, DATA_DIR)
         print(f"Shape: {df.shape[0]} rows x {df.shape[1]} columns")
         print(f"\nColumns:\n{df.columns.tolist()}")
@@ -350,7 +295,7 @@ def audit_rano() -> tuple[pd.DataFrame, RanoStats]:
         rano_valid: filtered, mapped, and deduplicated DataFrame
         stats: RanoStats dataclass
     """
-    _section("RANO AUDIT — per patient")
+    print_section("RANO AUDIT — per patient")
 
     rano = load_csv(CSV_RANO, DATA_DIR)
     rano.columns = ["Patient", "Date", "LessThan3M", "NonMeasurable", "Rating", "Rationale"]
@@ -486,10 +431,10 @@ def audit_temporal_intervals(rano_valid: pd.DataFrame) -> TemporalStats:
     Analyse delta_t between consecutive scans per patient.
     Key check: Progressive with significantly lower mean delta_t signals leakage.
     """
-    _section("TEMPORAL INTERVALS — clinical workflow leakage check")
+    print_section("TEMPORAL INTERVALS — clinical workflow leakage check")
 
-    df = _add_week_column(rano_valid)
-    pairs = _compute_consecutive_pairs(df)
+    df = add_week_column(rano_valid)
+    pairs = compute_consecutive_pairs(df)
 
     summary = pairs["delta_weeks"].describe().round(1)
     print(f"\ndelta_t distribution (weeks):\n{summary.to_string()}")
@@ -536,7 +481,7 @@ def audit_radiomic_features(
         source_name: label used in output and dataclass ("HD-GLIO-AUTO" / "DeepBraTumIA")
         required_labels: labels that must ALL be usable for a scan to be complete
     """
-    _section(f"RADIOMIC FEATURES AUDIT — {source_name}")
+    print_section(f"RADIOMIC FEATURES AUDIT — {source_name}")
 
     feat = load_csv(csv_name, DATA_DIR)
     completeness = load_csv(CSV_COMPLETENESS, DATA_DIR)
@@ -650,7 +595,7 @@ def compute_n_effective(
         complete_scans: (Patient, Timepoint) keys with fully usable features
         source_name: "HD-GLIO-AUTO" or "DeepBraTumIA"
     """
-    _section(f"N_EFFECTIVE — {source_name} (label shift + radiomics join)")
+    print_section(f"N_EFFECTIVE — {source_name} (label shift + radiomics join)")
 
     stats = _compute_paired_with_radiomics(rano_valid, complete_scans, source_name)
 
