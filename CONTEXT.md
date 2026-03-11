@@ -6,15 +6,21 @@ Demonstrative case study: automatic RANO treatment response prediction on the LU
 Target: preprint on bioRxiv + public GitHub repository.
 
 ## How to Navigate This Repository
-Each phase has a dedicated plan file with operational detail:
-- `docs/PHASE_0.md` — Data Foundation (audit + preprocessing + validation)
-- `docs/PHASE_1.md` — Graph Construction
-- `docs/PHASE_2.md` — Baseline Models
-- `docs/PHASE_3.md` — Temporal GNN + Interpretability
-- `docs/PHASE_4.md` — Uncertainty Quantification
-- `docs/PHASE_5.md` — Framework + Paper
+Each step has a dedicated plan file with operational detail:
+- `docs/STEP_0.md` — Audit
+- `docs/STEP_1.md` — Preprocessing + Validation
+- `docs/STEP_2.md` — Feature Engineering
+- `docs/STEP_3.md` — Baseline Models
+- `docs/STEP_4.md` — Graph Construction + GNN
+- `docs/STEP_5.md` — Interpretability
+- `docs/STEP_6.md` — Uncertainty Quantification
+- `docs/STEP_7.md` — Framework
+- `docs/STEP_8.md` — Paper
 
-This file (CONTEXT.md) is the strategic document. Phase files are the tactical ones.
+This file (CONTEXT.md) is the strategic document. Step files are the tactical ones.
+
+**Session continuity**: at the start of each new chat session, ask Claude to read
+CONTEXT.md and the relevant STEP_N.md before proceeding.
 
 ---
 
@@ -30,7 +36,7 @@ This file (CONTEXT.md) is the strategic document. Phase files are the tactical o
 - Class grouping: CR+PR → Response | SD → Stable | PD → Progressive
 - Patients with ≥3 valid timepoints: 55
 
-### Phase 0 Audit Results (completed)
+### Step 0 Audit Results (completed)
 Primary source: DeepBraTumIA
 
 **RANO:**
@@ -41,7 +47,7 @@ Primary source: DeepBraTumIA
 - 599 scans in CSV (39 absent from datacompleteness — extraction failed)
 - 70 scans with all-NaN features (segmentation silent failure)
 - 529 fully usable scans across 91 patients
-- Partial-NaN scans (usable but some sequences missing): tracked, handled in preprocessing
+- Partial-NaN scans: tracked in audit, dropped in preprocessing (any-NaN strategy)
 
 **HD-GLIO-AUTO coverage (reference):**
 - 599 scans in CSV (same 39 absent)
@@ -49,7 +55,7 @@ Primary source: DeepBraTumIA
 - 424 fully usable scans across 89 patients
 
 **n_effective (true ML sample size — both t and t+1 must have usable scans):**
-- DeepBraTumIA: **231 paired examples, 64 patients**
+- DeepBraTumIA: **231 paired examples, 64 patients**  ← derived from LUMIERE v202211
   - Progressive=175 (76%), Stable=25 (11%), Response=31 (13%)
 - HD-GLIO-AUTO: 158 paired examples, 54 patients (reference/ablation only)
 
@@ -60,8 +66,7 @@ Primary source: DeepBraTumIA
 - Patient-039: loses all paired examples after segmentation failure drop
 
 **Temporal leakage:** low risk (Progressive=13.3w, Stable=13.3w, Response=16.0w)
-**High-skew features:** 67 radiomic features with |skewness|>2 in DeepBraTumIA (log-transform candidates)
-**Duplicate:** Patient-042 week-010 had SD and PD — PD kept (last occurrence), documented in paper Methods
+**High-skew features:** 67 radiomic features with |skewness|>2 (log-transform candidates)
 
 ---
 
@@ -88,7 +93,7 @@ for patient in patients:
 LUMIERE is irregularly longitudinal: scan intervals are not fixed but determined
 by clinical decisions correlated with the target.
 
-Four mandatory ablations (executed in Phase 2, reported in paper):
+Four mandatory ablations (executed in Step 3, reported in paper):
   A) Radiomics features only (no temporal features)
   B) Temporal features only (interval_weeks, scan_index, time_from_diagnosis_weeks)
   C) Radiomics + temporal features
@@ -96,7 +101,12 @@ Four mandatory ablations (executed in Phase 2, reported in paper):
   If B ≈ C: weak radiomic signal — must declare in paper.
   Additional: interval_weeks SHAP rank in final LightGBM model.
 
-### 3. Temporal class imbalance (beyond standard class imbalance)
+### 3. Feature Selection must live inside cross-validation
+Feature selection (mRMR + Stability Selection) is executed fold-by-fold inside
+the training loop — never on the full dataset. Doing it outside CV is data leakage.
+The parquet from Step 1 contains all 1284 features; selection happens in Step 3.
+
+### 4. Temporal class imbalance (beyond standard class imbalance)
 Patients responding to therapy tend to have fewer scans and more distant follow-ups.
 To be declared explicitly in the Limitations section.
 
@@ -104,11 +114,7 @@ To be declared explicitly in the Limitations section.
 
 ## Available Files in data/raw/lumiere/
 - LUMIERE-pyradiomics-deepbratumia-features.csv (7188 rows, 152 columns) — PRIMARY
-  Structure: 1 row per (patient × timepoint × sequence × label)
-  Labels: Necrosis, Contrast-enhancing, Edema
-  → Must be pivoted to 1 row per (patient × timepoint) in preprocessing
 - LUMIERE-pyradiomics-hdglioauto-features.csv (4792 rows, 152 columns) — REFERENCE
-  Labels: Non-enhancing, Contrast-enhancing
 - LUMIERE-ExpertRating-v202211.csv (616 rows — RANO labels)
 - LUMIERE-Demographics_Pathology.csv (91 rows — clinical data)
 - LUMIERE-datacompleteness.csv (638 rows — sequence availability per timepoint)
@@ -122,27 +128,34 @@ This project uses features(t1..tN) → label(tN+1), which is the correct formula
 
 ---
 
-## Architecture
+## Pipeline Architecture
 ```
-Input: temporal series of graphs per patient
-         ↓
-Feature Selection: ~20-30 features (mRMR + Stability Selection)
-         ↓
-Graph Construction per timepoint T:
-  - Nodes: Necrosis, Contrast-enhancing, Edema (normalised PyRadiomics features)
-  - Edges: triangular topology (3 bidirectional edges)
-  - Edge features: volumetric ratio + interval_weeks
-  - Delta-graph: (feature_T - feature_T-1) / delta_weeks
-         ↓
-Phase 2 — Baseline: LR → LightGBM+SHAP → LSTM
-         ↓
-Phase 3 — Temporal GNN: GATv2Conv message passing + Temporal Attention
-       + Interpretability: attention weights, Integrated Gradients (Captum)
-         ↓
-Phase 4 — Uncertainty: Conformal Prediction (distribution-free)
-         ↓
-Output: RANO class + prediction set with calibrated confidence
-        + per-patient explanation (top features, most predictive timepoint)
+Raw CSVs
+    ↓
+Step 0 — Audit (lumiere_audit.py)
+    ↓
+Step 1 — Preprocessing + Validation
+    dataset_paired.parquet: 231 rows, 2576 columns
+    ↓
+Step 2 — Feature Engineering (exploratory, no label-dependent selection)
+    ↓
+Step 3 — Baseline Models (LR → LightGBM+SHAP → LSTM)
+    feature selection mRMR + Stability Selection inside CV here
+    ↓
+Step 4 — Graph Construction + Temporal GNN
+    GraphConfig uses features selected in Step 3
+    3-node triangular graph: NC ↔ CE ↔ ED
+    GATv2Conv (1 layer) + Temporal Attention
+    ↓
+Step 5 — Interpretability
+    SHAP global (Step 3 output), Integrated Gradients, attention weights
+    ↓
+Step 6 — Uncertainty Quantification
+    Conformal Prediction (RAPS score)
+    ↓
+Step 7 — Framework (generalisation + CLI + DVC + tutorial)
+    ↓
+Step 8 — Paper (bioRxiv preprint)
 ```
 
 ---
@@ -150,6 +163,7 @@ Output: RANO class + prediction set with calibrated confidence
 ## Critical Technical Decisions
 1. Z-score normalization ONLY on training data of each fold (never fit on entire dataset)
 2. StratifiedGroupKFold — group=patient, stratum=RANO class — never mix scans of same patient
+   All cross-validation splits use Patient ID as grouping variable to prevent intra-patient leakage.
 3. Primary segmentation source: DeepBraTumIA (3 nodes) — more coverage, biologically richer
    HD-GLIO-AUTO kept as reference for ablation (2-node graph vs 3-node graph)
 4. Three-node graph: Necrosis ↔ Contrast-enhancing ↔ Edema (triangular topology)
@@ -157,44 +171,57 @@ Output: RANO class + prediction set with calibrated confidence
 5. Delta-graph normalized by temporal interval: delta_feature / delta_weeks
 6. Metrics: macro F1, MCC, AUROC per class, PR-AUC per class — NEVER accuracy
    PR-AUC is primary for minority classes (Response 13%, Stable 11%) under heavy imbalance
-7. n_effective = 231 (DeepBraTumIA) — both t AND t+1 must have complete features
+7. n_effective = 231 (DeepBraTumIA, LUMIERE v202211) — both t AND t+1 must have complete features
 8. Feature selection: mRMR + Stability Selection (τ=0.7, B=100 bootstrap)
+   - Executed inside CV only — never on full dataset
    - Formula: max I(xi; y) - (1/|S|) * sum I(xi; xj∈S)
    - MI estimation: Kraskov estimator (continuous variables, small n)
    - Stability measured both across bootstrap replicates AND across CV folds
    - Features stable across both are the primary biological interpretation basis
-9. Discarded techniques: MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input
-   Also: shift+log1p on bounded features (glcm_Correlation, glcm_Imc1 — domain [-1,1]);
-   all-NaN detection for missing value drop (replaced by any-NaN per label block)
+9. Discarded techniques: MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input;
+   shift+log1p on bounded features; all-NaN detection (replaced by any-NaN per label block)
 10. UMAP allowed ONLY for exploratory visualization in the paper
 11. Baseline hierarchy — mandatory for paper credibility:
-    Baseline 1: Logistic Regression
-    Baseline 2: XGBoost / LightGBM
+    Baseline 1: Logistic Regression (cross-sectional)
+    Baseline 2: LightGBM + SHAP
     Baseline 3: LSTM on flat vectors
-    Ablation:   2-node graph (HD-GLIO-AUTO) vs 3-node graph (DeepBraTumIA)
-    Model:      Temporal GNN (3-node)
-12. History length bias — add as explicit features:
-    - absolute time from diagnosis to timepoint T (time_from_diagnosis_weeks)
-    - number of previous scans for that patient (scan_index)
-13. Interpretability — first-class output (see PHASE_3.md §Interpretability):
-    - Global: SHAP on LightGBM (Phase 2), feature stability scores (Phase 1)
-    - Local: Integrated Gradients on GNN (Phase 3), attention weight profiles
-    - Clinical: prediction set + top driving features per prediction (Phase 4)
-14. Generalisation deferred to Phase 5: the pipeline is LUMIERE-specific in V1.
-    Abstraction to a configurable framework happens only after V1 is complete.
+    Ablation A-D: temporal leakage quantification
+    Ablation: 2-node (HD-GLIO-AUTO) vs 3-node (DeepBraTumIA)
+    Model: Temporal GNN (3-node)
+12. History length bias — explicit features:
+    - time_from_diagnosis_weeks: absolute time from diagnosis to T
+    - scan_index: 0-based ordinal per patient
+13. Interpretability — first-class output:
+    - Global: SHAP on LightGBM (Step 3), feature stability scores
+    - Local: Integrated Gradients on GNN (Step 5), attention weight profiles
+    - Clinical: prediction set + top driving features per prediction (Step 6)
+14. GNN is an exploratory component, not the central scientific claim.
+    The pipeline architecture and reproducibility are the primary contributions.
+15. Generalisation deferred to Step 7: pipeline is LUMIERE-specific in V1.
 
 ---
 
-## Preprocessing Pipeline (summary — see docs/PHASE_0.md for detail)
-1. Pivot DeepBraTumIA CSV: 7188 rows → 1 row per (patient, timepoint)
-   Column naming: {label}_{sequence}_{feature_name}
-2. Merge with RANO labels on (Patient, Timepoint); deduplicate Patient-042 week-010
-3. Apply label shift: assign label_t+1 as target, drop last timepoint per patient
-4. Add temporal features: interval_weeks, time_from_diagnosis_weeks, scan_index
-5. Drop scans where ANY feature for a segmentation label is NaN (63 scans dropped);
-   log1p transform 514 high-skew features (30 excluded: Hounsfield + bounded features)
-6. Compute delta features: Δf = (f_t - f_{t-1}) / interval_weeks; Δf=0 for baseline scan
-7. Normalization: inside cross-validation only (StandardScaler fit on train fold)
+## Preprocessing Summary (see STEP_1.md for detail)
+1. Pivot DeepBraTumIA CSV → 1 row per (patient, timepoint)
+2. Merge with RANO labels; deduplicate Patient-042 week-010
+3. Label shift: target = RANO(t+1), drop last timepoint per patient
+4. Drop scans where ANY feature for a segmentation label is NaN (63 dropped)
+5. log1p transform 514 high-skew features (30 excluded: Hounsfield + bounded)
+6. Add temporal features: interval_weeks, time_from_diagnosis_weeks, scan_index
+7. Compute delta features: Δf = (f_t - f_{t-1}) / interval_weeks
+8. Normalization: inside CV only (StandardScaler fit on train fold)
+
+Output schema — dataset_paired.parquet:
+```
+Patient, Timepoint                     — identifiers
+target, target_encoded                 — RANO(t+1), integer-encoded
+interval_weeks                         — weeks T → T+1
+time_from_diagnosis_weeks              — week_num of scan T
+scan_index                             — 0-based ordinal per patient
+{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feat}   — 1284 radiomic features
+delta_{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feat} — 1284 delta features
+is_baseline_scan                       — True for first scan per patient
+```
 
 ---
 
@@ -207,17 +234,19 @@ gbm-longitudinal-toolkit/
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py, validate_dataset.py
-│   ├── preprocessing/          # build_dataset.py, normalizer.py
-│   ├── graphs/                 # graph_builder.py, delta_graph.py
-│   ├── models/                 # lstm_baseline.py, gnn.py, temporal_attention.py
+│   ├── preprocessing/          # build_dataset.py
+│   ├── graphs/                 # graph_builder.py
+│   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
+│   │                           # lstm_baseline.py, gnn.py, temporal_attention.py
 │   ├── training/               # trainer.py, cross_validation.py, metrics.py
-│   ├── interpretability/       # shap_baseline.py, integrated_gradients.py, attention_vis.py
+│   ├── interpretability/       # shap_baseline.py, integrated_gradients.py,
+│   │                           # attention_vis.py, clinical_summary.py
 │   └── uncertainty/            # conformal.py
 ├── tests/
 ├── experiments/                # MLflow runs
 ├── notebooks/                  # EDA — not production
 ├── configs/                    # model parameter YAMLs
-├── docs/                       # PHASE_0.md ... PHASE_5.md
+├── docs/                       # STEP_0.md ... STEP_8.md
 ├── FUTURE.md
 ├── CONTEXT.md
 ├── pyproject.toml
@@ -227,12 +256,15 @@ gbm-longitudinal-toolkit/
 ---
 
 ## Roadmap
-- Phase 0 — Data Foundation: audit ✅ | preprocessing ✅ | validation →
-- Phase 1 — Graph Construction (3 weeks): GraphBuilder (3-node), delta-graph
-- Phase 2 — Baseline (2 weeks): LR → LightGBM → LSTM
-- Phase 3 — Temporal GNN (4 weeks): TumorGraphNet (3-node) + TemporalAttention
-- Phase 4 — UQ (2 weeks): Conformal Prediction
-- Phase 5 — Framework + Paper (4-6 weeks): documentation, preprint
+- Step 0 — Audit ✅
+- Step 1 — Preprocessing + Validation ✅
+- Step 2 — Feature Engineering ⏳
+- Step 3 — Baseline Models
+- Step 4 — Graph Construction + GNN
+- Step 5 — Interpretability
+- Step 6 — Uncertainty Quantification
+- Step 7 — Framework
+- Step 8 — Paper
 
 ---
 
@@ -240,12 +272,11 @@ gbm-longitudinal-toolkit/
 - Python 3.12, uv for dependency management
 - PyTorch + PyTorch Geometric (GNN)
 - scikit-learn (baseline, cross-validation, feature selection)
-- XGBoost / LightGBM (strong baseline)
+- LightGBM (strong baseline)
 - SHAP (interpretability for baseline models)
 - Captum (Integrated Gradients for GNN)
 - MLflow (experiment tracking)
 - DVC (data versioning)
-- FastAPI (optional serving)
 - Ruff + Mypy (pre-commit)
 - Pytest (testing)
 
@@ -253,7 +284,7 @@ gbm-longitudinal-toolkit/
 
 ## Core Assumptions
 A1. Radiomic features contain predictive signal for RANO(t+1).
-    Verification: compare against interval_weeks-only baseline.
+    Verification: ablation A vs B in Step 3.
 A2. Expert RANO labels are reliable as ground truth.
     Known limitation: inter-rater variability not quantified.
 A3. Temporal feature dynamics contain additional signal beyond a single timepoint.
@@ -281,30 +312,22 @@ Notes:
 ---
 
 ## Software Engineering Principles
-
 1. **Single Responsibility** — every function and module does exactly one thing.
 2. **DRY** — if logic appears in two places, it belongs in `src/utils/lumiere_io.py`.
-3. **Fail Fast and Explicitly** — invalid states raise errors immediately with
-   descriptive messages. A silent wrong result is worse than a loud exception.
+3. **Fail Fast and Explicitly** — invalid states raise errors immediately with descriptive messages.
 4. **Pure Functions Where Possible** — reserve side effects for main().
-5. **Occam's Razor** — prefer the simplest solution. Do not introduce abstractions
-   unless they remove real duplication or manage real complexity.
+5. **Occam's Razor** — prefer the simplest solution.
 6. **Explicit Over Implicit** — type annotations on all public functions.
-   Named constants instead of magic strings or numbers.
-7. **Separation of Layers** — utilities (pure logic) → domain functions
-   (orchestrate + print) → entry point (I/O only).
+7. **Separation of Layers** — utilities → domain functions → entry point.
 8. **Typed Results** — use dataclasses for structured return values.
-9. **Centralised I/O** — all CSV loading through a single _load_csv() function.
-10. **No Premature Optimisation** — correct and readable first. On n=231,
-    readability always wins.
-11. **Reproducibility** — fix random seeds explicitly (Python, NumPy, PyTorch).
-    Dataset versioned via DVC. All hyperparameters in YAML configs, never
-    hardcoded. MLflow logs config alongside metrics.
+9. **Centralised I/O** — all CSV loading through load_csv() in lumiere_io.py.
+10. **No Premature Optimisation** — correct and readable first. On n=231, readability wins.
+11. **Reproducibility** — fix random seeds. DVC for data. YAML for hyperparameters. MLflow for metrics.
 
 ---
 
 ## Important Notes
-- New ideas → FUTURE.md (e.g. Neural ODE, raw MRI volumes, multi-institutional)
+- New ideas → FUTURE.md (Neural ODE, raw MRI volumes, multi-institutional)
 - GNN with 3 nodes may not beat baseline — limitation, not failure
 - Generalizable framework is the main value, not the model on LUMIERE
 - Seek clinical collaboration AFTER V1 for prospective validation
