@@ -1,5 +1,5 @@
 """
-src/audit/validate_features.py
+src/audit/features_validator.py
 ================================
 Runs 10 assertions on dataset_engineered.parquet to verify feature
 engineering integrity.
@@ -19,7 +19,7 @@ Assertions:
     10. scan_index is 0-based and contiguous per patient
 
 Usage:
-    python -m src.audit.validate_features
+    python -m src.audit.features_validator
 """
 
 from pathlib import Path
@@ -40,7 +40,7 @@ from src.utils.lumiere_io import (
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = Path("data/processed")
 PARQUET_PATH = OUTPUT_DIR / "dataset_engineered.parquet"
-REPORT_PATH = OUTPUT_DIR / "validation_features_report.json"
+REPORT_PATH = OUTPUT_DIR / "features_validator_report.json"
 
 EXPECTED_ROWS = 231
 EXPECTED_COLS = 2585
@@ -207,10 +207,10 @@ def check_scan_index_contiguity(df: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print_section("LUMIERE Feature Engineering Validation — Step 2")
+    print_section("LUMIERE Features Validation — Step 2")
 
     if not PARQUET_PATH.exists():
-        print(f"ERROR: {PARQUET_PATH} not found. Run feature_engineering.py first.")
+        print(f"ERROR: {PARQUET_PATH} not found. Run features_builder.py first.")
         return
 
     df = pd.read_parquet(PARQUET_PATH)
@@ -255,7 +255,7 @@ def main() -> None:
     )
 
     if failed > 0:
-        print("\n  ❌ VALIDATION FAILED — fix feature_engineering.py before Step 3")
+        print("\n  ❌ VALIDATION FAILED — fix features_builder.py before Step 3")
     else:
         print("\n  ✅ VALIDATION PASSED — ready for Step 3")
     print(SECTION)

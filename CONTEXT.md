@@ -136,11 +136,11 @@ Step 0 — Audit (lumiere_audit.py)
     ↓
 Step 1 — Preprocessing + Validation
     dataset_paired.parquet: 231 rows, 2576 columns
-    validate_preprocessing.py → validation_preprocessing_report.json
+    dataset_validator.py → validation_dataset_builder_report.json
     ↓
 Step 2 — Feature Engineering (exploratory, no label-dependent selection)
     dataset_engineered.parquet: 231 rows, 2585 columns (+9 derived features)
-    validate_features.py → validation_features_report.json
+    features_validator.py → features_validator_report.json
     ↓
 Step 3 — Baseline Models (LR → LightGBM+SHAP → LSTM)
     feature selection mRMR + Stability Selection inside CV here
@@ -271,9 +271,9 @@ gbm-longitudinal-toolkit/
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py
-│   │                           # validate_preprocessing.py, validate_features.py
+│   │                           # dataset_validator.py, features_validator.py
 │   │                           # validate_graphs.py (Step 4)
-│   ├── preprocessing/          # build_dataset.py, feature_engineering.py
+│   ├── preprocessing/          # dataset_builder.py, features_builder.py
 │   ├── graphs/                 # graph_builder.py
 │   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
 │   │                           # lstm_baseline.py, gnn.py, temporal_attention.py
@@ -366,7 +366,7 @@ Notes:
     corresponding `validate_*.py` in `src/audit/`. The validator runs after the producer,
     saves a JSON report to `data/processed/`, and exits with code 1 on any FAIL so DVC
     and CI detect regressions automatically. Step 0 (audit) is exempt — it is itself a
-    validation pass. Naming convention: `validate_preprocessing.py`, `validate_features.py`,
+    validation pass. Naming convention: `dataset_validator.py`, `features_validator.py`,
     `validate_graphs.py`, etc. — semantic names, not step numbers.
 
 ---

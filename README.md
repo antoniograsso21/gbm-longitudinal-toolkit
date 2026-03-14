@@ -92,8 +92,8 @@ gbm-longitudinal-toolkit/
 │   └── processed/             # audit, parquet, validation reports
 ├── src/
 │   ├── utils/                 # LUMIERE-specific I/O and parsing (lumiere_io.py)
-│   ├── audit/                 # lumiere_audit.py, validate_dataset.py
-│   ├── preprocessing/         # build_dataset.py, feature_engineering.py
+│   ├── audit/                 # lumiere_audit.py, dataset_validator.py
+│   ├── preprocessing/         # dataset_builder.py, features_builder.py
 │   ├── graphs/                # graph_builder.py, temporal sequences
 │   ├── models/                # logistic_baseline.py, gbm_baseline.py, lstm_baseline.py, gnn.py
 │   ├── training/              # CV loops, metrics, MLflow integration
@@ -143,25 +143,25 @@ implemented and passing validation.
 
    ```bash
    uv run -m src.audit.lumiere_audit
-   uv run -m src.preprocessing.build_dataset
-   uv run -m src.audit.validate_dataset
+   uv run -m src.preprocessing.dataset_builder
+   uv run -m src.audit.dataset_validator
    ```
 
    This produces:
    - `data/processed/dataset_stats.json`
    - `data/processed/dataset_paired.parquet`
-   - `data/processed/preprocessing_report.json`
-   - `data/processed/validation_report.json`
+   - `data/processed/dataset_builder_report.json`
+   - `data/processed/dataset_validator_report.json`
 
 3. **Run feature engineering**
 
    ```bash
-   uv run -m src.preprocessing.feature_engineering
+   uv run -m src.preprocessing.features_builder
    ```
 
    This produces:
    - `data/processed/dataset_engineered.parquet` (231×2585, +9 derived features)
-   - `data/processed/feature_engineering_report.json`
+   - `data/processed/features_builder_report.json`
 
 4. **Explore the design**
    - Read `CONTEXT.md` for the scientific rationale.

@@ -17,11 +17,11 @@ Normalization is NOT performed here.
 It lives inside the cross-validator in Step 3 (StandardScaler fit on train fold only).
 
 Usage:
-    python -m src.preprocessing.build_dataset
+    python -m src.preprocessing.dataset_builder
 
 Output:
     data/processed/dataset_paired.parquet
-    data/processed/preprocessing_report.json
+    data/processed/dataset_builder_report.json
 """
 
 import json
@@ -516,7 +516,7 @@ def _finalize(paired: pd.DataFrame) -> pd.DataFrame:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("GBM Longitudinal Toolkit — Preprocessing (Step 0.2)")
+    print("GBM Longitudinal Toolkit — Preprocessing (Step 1)")
     print(SECTION)
     print(f"Source:            {CSV_DEEPBRATUMIA}")
     print(f"Excluded patients: {sorted(PATIENTS_EXCLUDED)}")
@@ -546,7 +546,7 @@ def main() -> None:
         output_path=str(output_path),
     )
 
-    report_path = OUTPUT_DIR / "preprocessing_report.json"
+    report_path = OUTPUT_DIR / "dataset_builder_report.json"
     with open(report_path, "w") as f:
         json.dump(asdict(report), f, indent=2)
 

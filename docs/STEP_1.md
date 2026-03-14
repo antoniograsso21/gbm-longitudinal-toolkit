@@ -5,19 +5,19 @@ Transform raw LUMIERE CSVs into `dataset_paired.parquet` and verify its integrit
 This parquet is the single input consumed by all subsequent steps.
 
 **Scripts**:
-- `src/preprocessing/build_dataset.py`
-- `src/audit/validate_preprocessing.py`
+- `src/preprocessing/dataset_builder.py`
+- `src/audit/dataset_validator.py`
 
 **Run**:
 ```bash
-uv run -m src.preprocessing.build_dataset
-uv run -m src.audit.validate_preprocessing
+uv run -m src.preprocessing.dataset_builder
+uv run -m src.audit.dataset_validator
 ```
 
 **Outputs**:
 - `data/processed/dataset_paired.parquet`
-- `data/processed/preprocessing_report.json`
-- `data/processed/validation_preprocessing_report.json`
+- `data/processed/dataset_builder_report.json`
+- `data/processed/validation_dataset_builder_report.json`
 
 ---
 
@@ -97,7 +97,7 @@ flags (1):
 
 ---
 
-## Validation Assertions (validate_preprocessing.py)
+## Validation Assertions (dataset_validator.py)
 
 | # | Assertion | Type |
 |---|-----------|------|
@@ -119,9 +119,9 @@ flags (1):
 ## Definition of Done ✅
 
 - [x] `dataset_paired.parquet`: 231 rows, 2576 columns, zero NaN, zero inf
-- [x] `preprocessing_report.json` saved
-- [x] `validation_preprocessing_report.json` saved — all 11 assertions PASS, no FAIL
+- [x] `dataset_builder_report.json` saved
+- [x] `validation_dataset_builder_report.json` saved — all 11 assertions PASS, no FAIL
 - [x] any-NaN strategy: 63 scans dropped, Patient-039 loss documented
 - [x] 514 features log-transformed, 30 excluded
 - [x] scan_index assigned after drop (contiguous)
-- [x] DVC tracking: dataset_stats.json, dataset_paired.parquet, validation_preprocessing_report.json
+- [x] DVC tracking: dataset_stats.json, dataset_paired.parquet, validation_dataset_builder_report.json

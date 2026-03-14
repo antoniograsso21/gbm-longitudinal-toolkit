@@ -11,19 +11,19 @@ Two things happen here, in strict order:
 **Input**: `data/processed/dataset_paired.parquet`
 **Outputs**:
 - `data/processed/dataset_engineered.parquet` — adds 9 derived features
-- `data/processed/feature_engineering_report.json`
-- `data/processed/validation_features_report.json`
+- `data/processed/features_builder_report.json`
+- `data/processed/features_validator_report.json`
 - `notebooks/step2_feature_engineering.ipynb`
 - `configs/feature_engineering.yaml`
 
 **Scripts**:
-- `src/preprocessing/feature_engineering.py`
-- `src/audit/validate_features.py`
+- `src/preprocessing/features_builder.py`
+- `src/audit/features_validator.py`
 
 **Run**:
 ```bash
-uv run -m src.preprocessing.feature_engineering
-uv run -m src.audit.validate_features
+uv run -m src.preprocessing.features_builder
+uv run -m src.audit.features_validator
 ```
 
 ---
@@ -131,8 +131,8 @@ CE_vs_nadir, weeks_since_nadir, is_nadir_scan
 delta_CE_NC_ratio, delta_CE_vs_nadir
 ```
 
-**File**: `src/preprocessing/feature_engineering.py`
-**Run**: `uv run -m src.preprocessing.feature_engineering`
+**File**: `src/preprocessing/features_builder.py`
+**Run**: `uv run -m src.preprocessing.features_builder`
 **Output**: `data/processed/dataset_engineered.parquet`
 
 ---
@@ -191,7 +191,7 @@ Visual sanity check. Paper figures only — NOT model input.
 
 For each radiomic feature, compute Pearson correlation between consecutive
 timepoints via `groupby + shift` applied dynamically on the sorted parquet.
-No `_prev` columns are stored — `build_dataset.py` saves delta rates, not raw
+No `_prev` columns are stored — `dataset_builder.py` saves delta rates, not raw
 previous values. The shift is computed at analysis time only.
 
 ```python
@@ -304,21 +304,21 @@ configs/feature_engineering.yaml:
 ### NaN policy
 - **Radiomic assoluti**: 0 NaN — scans con any-NaN droppati in Step 1
 - **Delta radiomic**: 0 NaN — le baseline scan hanno delta forzato a `0.0`
-  by design in `build_dataset.py` (`.where(~is_baseline, other=0.0)`), non NaN.
+  by design in `dataset_builder.py` (`.where(~is_baseline, other=0.0)`), non NaN.
   Step 3 riceve un DataFrame completo; mRMR non richiede imputation.
-- **Derived + delta derived**: 0 NaN — verificato post `feature_engineering.py`
+- **Derived + delta derived**: 0 NaN — verificato post `features_builder.py`
 
 ### Columns excluded from mRMR pool (Step 3)
 ```python
 NON_FEATURE_COLS = [
     "Patient", "Timepoint",       # identifiers
     "target", "target_encoded",   # target — mai dentro CV
-    "is_baseline_scan",           # binary flag — creato in build_dataset.py
+    "is_baseline_scan",           # binary flag — creato in dataset_builder.py
     "is_nadir_scan",              # binary flag — non feature continua
 ]
 ```
 
-`is_baseline_scan` è creata in `build_dataset.py` (sub-step 6) e persiste nel
+`is_baseline_scan` è creata in `dataset_builder.py` (sub-step 6) e persiste nel
 parquet. Non ha prefisso standard — va intercettata per nome esplicito.
 
 ### Handoff to Step 3
@@ -330,10 +330,10 @@ non in `NON_FEATURE_COLS`, esclusivamente dentro il CV loop.
 
 ## Definition of Done
 
-- [x] `feature_engineering.py` implemented and passing unit tests
+- [x] `features_builder.py` implemented and passing unit tests
 - [x] `dataset_engineered.parquet`: 231 rows × 2585 columns, zero NaN
-- [x] `feature_engineering_report.json` saved
-- [x] `validation_features_report.json` saved — all 10 assertions PASS, no FAIL
+- [x] `features_builder_report.json` saved
+- [x] `features_validator_report.json` saved — all 10 assertions PASS, no FAIL
 - [x] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
 - [x] Nadir computed from parquet timepoints only (not raw RANO)
 - [x] Shape feature cross-sequence consistency check done

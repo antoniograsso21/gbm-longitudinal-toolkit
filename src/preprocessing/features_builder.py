@@ -1,6 +1,6 @@
 """
-src/preprocessing/feature_engineering.py
-=========================================
+src/preprocessing/features_builder.py
+=======================================
 Computes derived cross-compartment and nadir-based features from
 dataset_paired.parquet and saves dataset_engineered.parquet.
 
@@ -30,11 +30,11 @@ Leakage guarantees:
     - delta features on is_baseline_scan rows are forced to 0.0
 
 Usage:
-    uv run -m src.preprocessing.feature_engineering
+    uv run -m src.preprocessing.features_builder
 
 Output:
     data/processed/dataset_engineered.parquet
-    data/processed/feature_engineering_report.json
+    data/processed/features_builder_report.json
 """
 
 from __future__ import annotations
@@ -54,10 +54,10 @@ from src.utils.lumiere_io import SECTION, print_section
 DATA_DIR = Path("data/processed")
 INPUT_PARQUET = DATA_DIR / "dataset_paired.parquet"
 OUTPUT_PARQUET = DATA_DIR / "dataset_engineered.parquet"
-REPORT_PATH = DATA_DIR / "feature_engineering_report.json"
+REPORT_PATH = DATA_DIR / "features_builder_report.json"
 
 # ---------------------------------------------------------------------------
-# Volume column names — must match pivot output from build_dataset.py
+# Volume column names — must match pivot output from dataset_builder.py
 # CT1 for CE and NC (contrast-enhanced T1 is the clinical reference sequence)
 # FLAIR for ED (standard for edema assessment in GBM)
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ def validate_derived_features(df: pd.DataFrame) -> None:
     Catches computation errors immediately (fail fast).
 
     For artifact-level validation runnable independently on the saved
-    parquet, see src/audit/validate_features.py.
+    parquet, see src/audit/features_validator.py.
 
     Checks:
         1. No NaN in any derived column
@@ -272,12 +272,12 @@ def main() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{SECTION}")
-    print("GBM Longitudinal Toolkit — Feature Engineering (Step 2)")
+    print("GBM Longitudinal Toolkit — Features Builder (Step 2)")
     print(SECTION)
 
     if not INPUT_PARQUET.exists():
         raise FileNotFoundError(
-            f"{INPUT_PARQUET} not found. Run build_dataset.py first."
+            f"{INPUT_PARQUET} not found. Run dataset_builder.py first."
         )
 
     df = pd.read_parquet(INPUT_PARQUET)

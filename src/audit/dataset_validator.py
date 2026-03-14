@@ -1,5 +1,5 @@
 """
-src/audit/validate_preprocessing.py
+src/audit/dataset_validator.py
 =====================================
 Runs 11 assertions on dataset_paired.parquet to verify preprocessing integrity.
 
@@ -19,7 +19,7 @@ Assertions:
     W1. Survival bias check (informational — WARN not FAIL)
 
 Usage:
-    python -m src.audit.validate_preprocessing
+    python -m src.audit.dataset_validator
 """
 
 import json
@@ -47,7 +47,7 @@ from src.utils.lumiere_io import (
 # ---------------------------------------------------------------------------
 OUTPUT_DIR = Path("data/processed")
 PARQUET_PATH = OUTPUT_DIR / "dataset_paired.parquet"
-REPORT_PATH = OUTPUT_DIR / "validation_preprocessing_report.json"
+REPORT_PATH = OUTPUT_DIR / "dataset_validator_report.json"
 
 EXPECTED_N_EFFECTIVE = 231
 EXPECTED_CLASS_DIST = {"Progressive": 175, "Stable": 25, "Response": 31}
@@ -207,10 +207,10 @@ def check_survival_bias(df: pd.DataFrame) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print_section("LUMIERE Preprocessing Validation — Step 1")
+    print_section("LUMIERE Dataset Validation — Step 1")
 
     if not PARQUET_PATH.exists():
-        print(f"ERROR: {PARQUET_PATH} not found. Run build_dataset.py first.")
+        print(f"ERROR: {PARQUET_PATH} not found. Run dataset_builder.py first.")
         return
 
     df = pd.read_parquet(PARQUET_PATH)
@@ -260,7 +260,7 @@ def main() -> None:
     )
 
     if failed > 0:
-        print("\n  ❌ VALIDATION FAILED — fix build_dataset.py before Step 2")
+        print("\n  ❌ VALIDATION FAILED — fix dataset_builder.py before Step 2")
     else:
         print("\n  ✅ VALIDATION PASSED — ready for Step 2")
     print(SECTION)

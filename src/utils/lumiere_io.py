@@ -4,8 +4,8 @@ src/utils/lumiere_io.py
 Shared pure utilities for the LUMIERE dataset.
 
 All LUMIERE-specific constants and low-level I/O functions live here.
-Scripts that import from this module: lumiere_audit.py, build_dataset.py,
-validate_preprocessing.py, validate_features.py, validate_graphs.py,
+Scripts that import from this module: lumiere_audit.py, dataset_builder.py,
+dataset_validator.py, features_validator.py, graphs_validator.py,
 graph_builder.py.
 
 LUMIERE-specific design decisions documented here:
@@ -231,7 +231,7 @@ def print_section(title: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Validation utilities (shared across validate_preprocessing, validate_features,
+# Validation utilities (shared across dataset_validator, features_validator,
 # validate_graphs — DRY: never duplicate these helpers in per-step files)
 # ---------------------------------------------------------------------------
 import json
