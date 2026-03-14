@@ -1,19 +1,20 @@
 """
-LUMIERE Preprocessing — Phase 0, Step 0.2
-==========================================
+LUMIERE Preprocessing — Step 1
+================================
 Transforms raw LUMIERE CSVs into dataset_paired.parquet:
 one row per (patient, timepoint) paired example ready for ML.
 
-Pipeline sub-steps:
+Pipeline sub-steps (execution order):
     1. Pivot radiomic CSV: long → wide (1 row per patient/timepoint)
     2. Merge with RANO labels (inner join on Patient + Timepoint)
     3. Label shift: target = RANO(t+1), drop last timepoint per patient
-    4. Add temporal features: interval_weeks, time_from_diagnosis_weeks, scan_index
-    5. Drop scans with segmentation failures; log-transform high-skew features
+    4. Drop scans with segmentation failures + log-transform high-skew features
+       (must precede temporal features — dropped rows would bias scan_index)
+    5. Add temporal features: interval_weeks, time_from_diagnosis_weeks, scan_index
     6. Compute delta features: Δf = (f_t - f_{t-1}) / interval_weeks
 
 Normalization is NOT performed here.
-It lives inside the cross-validator in Phase 2 (StandardScaler fit on train fold only).
+It lives inside the cross-validator in Step 3 (StandardScaler fit on train fold only).
 
 Usage:
     python -m src.preprocessing.build_dataset

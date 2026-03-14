@@ -221,7 +221,11 @@ def compute_derived_deltas(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 def validate_derived_features(df: pd.DataFrame) -> None:
     """
-    Assert correctness of derived features. Raises AssertionError on failure.
+    Internal producer-side guard — runs at generation time inside main().
+    Catches computation errors immediately (fail fast).
+
+    For artifact-level validation runnable independently on the saved
+    parquet, see src/audit/validate_features.py.
 
     Checks:
         1. No NaN in any derived column
