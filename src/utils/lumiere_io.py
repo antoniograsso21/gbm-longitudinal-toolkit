@@ -5,7 +5,8 @@ Shared pure utilities for the LUMIERE dataset.
 
 All LUMIERE-specific constants and low-level I/O functions live here.
 Scripts that import from this module: lumiere_audit.py, build_dataset.py,
-validate_dataset.py, graph_builder.py.
+validate_preprocessing.py, validate_features.py, validate_graphs.py,
+graph_builder.py.
 
 LUMIERE-specific design decisions documented here:
 - parse_week: handles week-NNN and week-NNN-M sub-week format
@@ -227,6 +228,86 @@ SECTION: str = "=" * 60
 def print_section(title: str) -> None:
     """Print a section header — consistent across all scripts."""
     print(f"\n{SECTION}\n{title}\n{SECTION}")
+
+
+# ---------------------------------------------------------------------------
+# Validation utilities (shared across validate_preprocessing, validate_features,
+# validate_graphs — DRY: never duplicate these helpers in per-step files)
+# ---------------------------------------------------------------------------
+import json
+import sys
+from dataclasses import asdict, dataclass
+from typing import Any
+
+
+@dataclass
+class ValidationReport:
+    """
+    Structured result for any pipeline validation script.
+
+    Fields:
+        passed:   number of assertions that returned PASS
+        failed:   number of assertions that returned FAIL
+        warnings: number of assertions that returned WARN
+        results:  dict mapping assertion name -> status string
+        metadata: step-specific summary values (shape, class dist, etc.)
+    """
+    passed: int
+    failed: int
+    warnings: int
+    results: dict[str, str]
+    metadata: dict[str, Any]
+
+
+def validation_result(label: str, ok: bool, msg: str = "") -> str:
+    """
+    Print and return a PASS / FAIL result line.
+
+    Args:
+        label: short assertion name shown in output.
+        ok:    True -> PASS, False -> FAIL.
+        msg:   failure detail appended to "FAIL: " (ignored when ok=True).
+
+    Returns:
+        "PASS" or "FAIL: <msg>"
+    """
+    status = "PASS" if ok else f"FAIL: {msg}"
+    icon = "✅" if ok else "❌"
+    print(f"  {icon}  {label}: {status}")
+    return status
+
+
+def validation_warn(label: str, msg: str) -> str:
+    """
+    Print and return a WARN result line.
+
+    Args:
+        label: short assertion name shown in output.
+        msg:   warning detail.
+
+    Returns:
+        "WARN: <msg>"
+    """
+    print(f"  ⚠️   {label}: WARN: {msg}")
+    return f"WARN: {msg}"
+
+
+def save_validation_report(report: "ValidationReport", path: "Path") -> None:
+    """
+    Serialise a ValidationReport to JSON and exit with code 1 if any FAIL.
+
+    Calling sys.exit(1) here ensures DVC and CI pipelines detect failures
+    without each validate_*.py having to re-implement the exit logic.
+
+    Args:
+        report: populated ValidationReport dataclass.
+        path:   output JSON path (parent directory must exist).
+    """
+    with open(path, "w") as f:
+        json.dump(asdict(report), f, indent=2)
+    print(f"\n  Saved -> {path}")
+    if report.failed > 0:
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

@@ -260,10 +260,65 @@ configs/feature_engineering.yaml:
 
 ---
 
+## Output Schema — dataset_engineered.parquet
+
+**Shape**: 231 rows × 2585 columns
+
+| Group | Count | Naming convention | dtype |
+|---|---|---|---|
+| Radiomic (absolute) | 1284 | `{LABEL}_{SEQ}_original_{family}_{feature}` | float64 |
+| Delta radiomic | 1284 | `delta_{LABEL}_{SEQ}_original_{family}_{feature}` | float64 |
+| Cross-compartment derived | 4 | `CE_NC_ratio`, `ED_CE_ratio`, `CE_fraction`, `total_tumor_volume` | float64 |
+| Nadir-based (continuous) | 2 | `CE_vs_nadir`, `weeks_since_nadir` | float64 |
+| Delta derived | 2 | `delta_CE_NC_ratio`, `delta_CE_vs_nadir` | float64 |
+| Temporal / metadata | 3 | `interval_weeks`, `scan_index`, `time_from_diagnosis_weeks` | float64/int |
+| Binary flags | 2 | `is_baseline_scan`, `is_nadir_scan` | bool |
+| ID + target | 4 | `Patient`, `Timepoint`, `target`, `target_encoded` | str/int |
+
+**Total**: 1284 + 1284 + 4 + 2 + 2 + 3 + 2 + 4 = 2585 ✅
+
+**Class distribution (target)**:
+- Progressive: 175 (75.8%)
+- Response: 31 (13.4%)
+- Stable: 25 (10.8%)
+
+### Naming convention
+- `LABEL` ∈ `{CE, NC, ED}`
+- `SEQ` ∈ `{CT1, T1, T2, FLAIR}` — non tutte le combinazioni esistono
+  (CE/NC usano CT1 per shape; ED usa FLAIR per volume)
+- Simmetria verificata: ogni feature radiomic ha il suo `delta_` corrispondente (0 orfani)
+
+### NaN policy
+- **Radiomic assoluti**: 0 NaN — scans con any-NaN droppati in Step 1
+- **Delta radiomic**: 0 NaN — le baseline scan hanno delta forzato a `0.0`
+  by design in `build_dataset.py` (`.where(~is_baseline, other=0.0)`), non NaN.
+  Step 3 riceve un DataFrame completo; mRMR non richiede imputation.
+- **Derived + delta derived**: 0 NaN — verificato post `feature_engineering.py`
+
+### Columns excluded from mRMR pool (Step 3)
+```python
+NON_FEATURE_COLS = [
+    "Patient", "Timepoint",       # identifiers
+    "target", "target_encoded",   # target — mai dentro CV
+    "is_baseline_scan",           # binary flag — creato in build_dataset.py
+    "is_nadir_scan",              # binary flag — non feature continua
+]
+```
+
+`is_baseline_scan` è creata in `build_dataset.py` (sub-step 6) e persiste nel
+parquet. Non ha prefisso standard — va intercettata per nome esplicito.
+
+### Handoff to Step 3
+`dataset_engineered.parquet` è il solo input di Step 3.
+Feature selection (mRMR + Stability Selection) opera su tutte le colonne
+non in `NON_FEATURE_COLS`, esclusivamente dentro il CV loop.
+
+---
+
 ## Definition of Done
 
 - [x] `feature_engineering.py` implemented and passing unit tests
-- [x] `dataset_engineered.parquet`: 231 rows, 2576 + 9 columns, zero NaN
+- [x] `dataset_engineered.parquet`: 231 rows × 2585 columns, zero NaN
 - [x] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
 - [x] Nadir computed from parquet timepoints only (not raw RANO)
 - [x] Shape feature cross-sequence consistency check done

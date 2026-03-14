@@ -6,18 +6,18 @@ This parquet is the single input consumed by all subsequent steps.
 
 **Scripts**:
 - `src/preprocessing/build_dataset.py`
-- `src/audit/validate_dataset.py`
+- `src/audit/validate_preprocessing.py`
 
 **Run**:
 ```bash
 uv run -m src.preprocessing.build_dataset
-uv run -m src.audit.validate_dataset
+uv run -m src.audit.validate_preprocessing
 ```
 
 **Outputs**:
 - `data/processed/dataset_paired.parquet`
 - `data/processed/preprocessing_report.json`
-- `data/processed/validation_report.json`
+- `data/processed/validation_preprocessing_report.json`
 
 ---
 
@@ -97,7 +97,7 @@ flags (1):
 
 ---
 
-## Validation Assertions (validate_dataset.py)
+## Validation Assertions (validate_preprocessing.py)
 
 | # | Assertion | Type |
 |---|-----------|------|
@@ -120,8 +120,8 @@ flags (1):
 
 - [x] `dataset_paired.parquet`: 231 rows, 2576 columns, zero NaN, zero inf
 - [x] `preprocessing_report.json` saved
-- [x] `validation_report.json` saved — all 11 assertions PASS, no FAIL
+- [x] `validation_preprocessing_report.json` saved — all 11 assertions PASS, no FAIL
 - [x] any-NaN strategy: 63 scans dropped, Patient-039 loss documented
 - [x] 514 features log-transformed, 30 excluded
 - [x] scan_index assigned after drop (contiguous)
-- [x] DVC tracking: dataset_stats.json, dataset_paired.parquet, validation_report.json
+- [x] DVC tracking: dataset_stats.json, dataset_paired.parquet, validation_preprocessing_report.json

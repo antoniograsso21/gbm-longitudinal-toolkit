@@ -136,9 +136,11 @@ Step 0 — Audit (lumiere_audit.py)
     ↓
 Step 1 — Preprocessing + Validation
     dataset_paired.parquet: 231 rows, 2576 columns
+    validate_preprocessing.py → validation_preprocessing_report.json
     ↓
 Step 2 — Feature Engineering (exploratory, no label-dependent selection)
     dataset_engineered.parquet: 231 rows, 2585 columns (+9 derived features)
+    validate_features.py → validation_features_report.json
     ↓
 Step 3 — Baseline Models (LR → LightGBM+SHAP → LSTM)
     feature selection mRMR + Stability Selection inside CV here
@@ -268,7 +270,9 @@ gbm-longitudinal-toolkit/
 ├── data/processed/             # pipeline output — DVC versioned
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
-│   ├── audit/                  # lumiere_audit.py, validate_dataset.py
+│   ├── audit/                  # lumiere_audit.py
+│   │                           # validate_preprocessing.py, validate_features.py
+│   │                           # validate_graphs.py (Step 4)
 │   ├── preprocessing/          # build_dataset.py, feature_engineering.py
 │   ├── graphs/                 # graph_builder.py
 │   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
@@ -358,6 +362,12 @@ Notes:
 9. **Centralised I/O** — all CSV loading through load_csv() in lumiere_io.py.
 10. **No Premature Optimisation** — correct and readable first. On n=231, readability wins.
 11. **Reproducibility** — fix random seeds. DVC for data. YAML for hyperparameters. MLflow for metrics.
+12. **Step-level Validation** — every step that produces a dataset artifact must have a
+    corresponding `validate_*.py` in `src/audit/`. The validator runs after the producer,
+    saves a JSON report to `data/processed/`, and exits with code 1 on any FAIL so DVC
+    and CI detect regressions automatically. Step 0 (audit) is exempt — it is itself a
+    validation pass. Naming convention: `validate_preprocessing.py`, `validate_features.py`,
+    `validate_graphs.py`, etc. — semantic names, not step numbers.
 
 ---
 
