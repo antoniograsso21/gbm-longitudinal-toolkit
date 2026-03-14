@@ -11,8 +11,20 @@ Two things happen here, in strict order:
 **Input**: `data/processed/dataset_paired.parquet`
 **Outputs**:
 - `data/processed/dataset_engineered.parquet` — adds 9 derived features
+- `data/processed/feature_engineering_report.json`
+- `data/processed/validation_features_report.json`
 - `notebooks/step2_feature_engineering.ipynb`
 - `configs/feature_engineering.yaml`
+
+**Scripts**:
+- `src/preprocessing/feature_engineering.py`
+- `src/audit/validate_features.py`
+
+**Run**:
+```bash
+uv run -m src.preprocessing.feature_engineering
+uv run -m src.audit.validate_features
+```
 
 ---
 
@@ -178,8 +190,9 @@ Visual sanity check. Paper figures only — NOT model input.
 ### 2.8 — Temporal autocorrelation (t vs t+1)
 
 For each radiomic feature, compute Pearson correlation between consecutive
-timepoints using `groupby + shift` on the sorted parquet (no `_prev` columns
-exist — `build_dataset.py` stores delta rates, not raw previous values).
+timepoints via `groupby + shift` applied dynamically on the sorted parquet.
+No `_prev` columns are stored — `build_dataset.py` saves delta rates, not raw
+previous values. The shift is computed at analysis time only.
 
 ```python
 df_sorted = df.sort_values(["Patient", "time_from_diagnosis_weeks"])
@@ -319,6 +332,8 @@ non in `NON_FEATURE_COLS`, esclusivamente dentro il CV loop.
 
 - [x] `feature_engineering.py` implemented and passing unit tests
 - [x] `dataset_engineered.parquet`: 231 rows × 2585 columns, zero NaN
+- [x] `feature_engineering_report.json` saved
+- [x] `validation_features_report.json` saved — all 10 assertions PASS, no FAIL
 - [x] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
 - [x] Nadir computed from parquet timepoints only (not raw RANO)
 - [x] Shape feature cross-sequence consistency check done
