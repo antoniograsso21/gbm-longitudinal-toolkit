@@ -3,19 +3,20 @@
 # Run: dvc repro
 #
 # Stage naming convention mirrors src/ directory structure:
-#   audit/     → lumiere_audit
+#   audit/         → lumiere_audit
 #   preprocessing/ → dataset_builder, features_builder
 #   validation/    → dataset_validator, features_validator, graphs_validator
 #   graphs/        → graphs_builder
 #   training/      → baselines_runner, gnn_runner
 #   uncertainty/   → conformal_runner
 #
-# Stages 3–8 are stubs — deps/outs will be populated as each step is implemented.
+# Stages marked ⏳ are not yet implemented and are commented out.
+# Uncomment each stage as the corresponding step is implemented.
 
 stages:
 
   # ---------------------------------------------------------------------------
-  # Step 0 — Audit
+  # Step 0 — Audit ✅
   # ---------------------------------------------------------------------------
   lumiere_audit:
     cmd: uv run -m src.audit.lumiere_audit
@@ -27,7 +28,7 @@ stages:
       - data/processed/audit/dataset_stats.json
 
   # ---------------------------------------------------------------------------
-  # Step 1 — Preprocessing
+  # Step 1 — Preprocessing ✅
   # ---------------------------------------------------------------------------
   dataset_builder:
     cmd: uv run -m src.preprocessing.dataset_builder
@@ -49,12 +50,13 @@ stages:
       - data/processed/validation/dataset_validator_report.json
 
   # ---------------------------------------------------------------------------
-  # Step 2 — Feature Engineering
+  # Step 2 — Feature Engineering ✅
   # ---------------------------------------------------------------------------
   features_builder:
     cmd: uv run -m src.preprocessing.features_builder
     deps:
       - data/processed/preprocessing/dataset_paired.parquet
+      - data/processed/validation/dataset_validator_report.json
       - src/preprocessing/features_builder.py
       - src/utils/lumiere_io.py
       - configs/features_builder.yaml
@@ -72,61 +74,76 @@ stages:
       - data/processed/validation/features_validator_report.json
 
   # ---------------------------------------------------------------------------
-  # Step 3 — Baseline Models (stub — populated in Step 3 implementation)
+  # Step 3 — Baseline Models ⏳
+  # Uncomment when src/training/baselines_runner.py is implemented.
   # ---------------------------------------------------------------------------
-  baselines_runner:
-    cmd: uv run -m src.training.baselines_runner --config configs/gbm_baseline.yaml
-    deps:
-      - data/processed/preprocessing/dataset_engineered.parquet
-      - data/processed/validation/features_validator_report.json
-      - src/training/baselines_runner.py
-      - src/utils/lumiere_io.py
-      - configs/gbm_baseline.yaml
-      - configs/logistic_baseline.yaml
-      - configs/lstm_baseline.yaml
-      - configs/feature_selector.yaml
-    outs:
-      - configs/selected_features.yaml
+  # baselines_runner:
+  #   cmd: uv run -m src.training.baselines_runner --config configs/gbm_baseline.yaml
+  #   deps:
+  #     - data/processed/preprocessing/dataset_engineered.parquet
+  #     - data/processed/validation/features_validator_report.json
+  #     - src/training/baselines_runner.py
+  #     - src/utils/lumiere_io.py
+  #     - configs/gbm_baseline.yaml
+  #     - configs/logistic_baseline.yaml
+  #     - configs/lstm_baseline.yaml
+  #     - configs/feature_selector.yaml
+  #   outs:
+  #     - configs/selected_features.yaml
+  #   metrics:
+  #     - data/processed/validation/baselines_metrics.json:
+  #         cache: false
 
   # ---------------------------------------------------------------------------
-  # Step 4 — Graph Construction + GNN (stub — populated in Step 4 implementation)
+  # Step 4 — Graph Construction ⏳
+  # Uncomment when src/graphs/graphs_builder.py is implemented.
   # ---------------------------------------------------------------------------
-  graphs_builder:
-    cmd: uv run -m src.graphs.graphs_builder
-    deps:
-      - data/processed/preprocessing/dataset_engineered.parquet
-      - configs/selected_features.yaml
-      - src/graphs/graphs_builder.py
-      - src/utils/lumiere_io.py
-      - configs/graph_config.yaml
-    outs:
-      - data/processed/graphs/
+  # graphs_builder:
+  #   cmd: uv run -m src.graphs.graphs_builder
+  #   deps:
+  #     - data/processed/preprocessing/dataset_engineered.parquet
+  #     - configs/selected_features.yaml
+  #     - src/graphs/graphs_builder.py
+  #     - src/utils/lumiere_io.py
+  #     - configs/graph_config.yaml
+  #   outs:
+  #     - data/processed/graphs/
 
-  graphs_validator:
-    cmd: uv run -m src.validation.graphs_validator
-    deps:
-      - data/processed/graphs/
-      - src/validation/graphs_validator.py
-      - src/utils/lumiere_io.py
-    outs:
-      - data/processed/validation/graphs_validator_report.json
-
-  gnn_runner:
-    cmd: uv run -m src.training.gnn_runner --config configs/gnn.yaml
-    deps:
-      - data/processed/graphs/
-      - data/processed/validation/graphs_validator_report.json
-      - src/training/gnn_runner.py
-      - configs/gnn.yaml
-    outs: []  # MLflow tracks results — no file output at this stage
+  # graphs_validator:
+  #   cmd: uv run -m src.validation.graphs_validator
+  #   deps:
+  #     - data/processed/graphs/
+  #     - src/validation/graphs_validator.py
+  #     - src/utils/lumiere_io.py
+  #   outs:
+  #     - data/processed/validation/graphs_validator_report.json
 
   # ---------------------------------------------------------------------------
-  # Step 6 — Uncertainty Quantification (stub)
+  # Step 4 — GNN Training ⏳
+  # Uncomment when src/training/gnn_runner.py is implemented.
   # ---------------------------------------------------------------------------
-  conformal_runner:
-    cmd: uv run -m src.uncertainty.conformal_runner --config configs/conformal.yaml
-    deps:
-      - data/processed/graphs/
-      - src/uncertainty/conformal_runner.py
-      - configs/conformal.yaml
-    outs: []  # MLflow tracks results
+  # gnn_runner:
+  #   cmd: uv run -m src.training.gnn_runner --config configs/gnn.yaml
+  #   deps:
+  #     - data/processed/graphs/
+  #     - data/processed/validation/graphs_validator_report.json
+  #     - src/training/gnn_runner.py
+  #     - configs/gnn.yaml
+  #   metrics:
+  #     - data/processed/validation/gnn_metrics.json:
+  #         cache: false
+
+  # ---------------------------------------------------------------------------
+  # Step 6 — Uncertainty Quantification ⏳
+  # Uncomment when src/uncertainty/conformal_runner.py is implemented.
+  # ---------------------------------------------------------------------------
+  # conformal_runner:
+  #   cmd: uv run -m src.uncertainty.conformal_runner --config configs/conformal.yaml
+  #   deps:
+  #     - data/processed/graphs/
+  #     - data/processed/validation/gnn_metrics.json
+  #     - src/uncertainty/conformal_runner.py
+  #     - configs/conformal.yaml
+  #   metrics:
+  #     - data/processed/validation/conformal_metrics.json:
+  #         cache: false

@@ -143,6 +143,10 @@ stages:
       hash: md5
       md5: a5ebfb48a67dda271d56ae861dfbe930
       size: 6849940
+    - path: data/processed/validation/dataset_validator_report.json
+      hash: md5
+      md5: 7598de4f4781144b5d0dbeb350aa1d6f
+      size: 753
     - path: src/preprocessing/features_builder.py
       hash: md5
       md5: 82038be37a98a15dec19168e9e953f0a
