@@ -1,11 +1,18 @@
 # Step 2 — Feature Engineering ⏳
 
 ## Objective
-Exploratory analysis of the feature space to inform model design.
-No label-dependent transformations here — those belong inside CV in Step 3.
+Two things happen here, in strict order:
+
+1. **Derived feature computation** — deterministic transformations without using
+   the label. Produces `dataset_engineered.parquet`.
+2. **Exploratory analysis** — visualise the feature space to inform model design.
+   Purely descriptive. Does NOT guide feature selection (that lives inside CV in Step 3).
 
 **Input**: `data/processed/dataset_paired.parquet`
-**Output**: `notebooks/step2_feature_engineering.ipynb` + `configs/feature_engineering.yaml`
+**Outputs**:
+- `data/processed/dataset_engineered.parquet` — adds 9 derived features
+- `notebooks/step2_feature_engineering.ipynb`
+- `configs/feature_engineering.yaml`
 
 ---
 
@@ -13,64 +20,237 @@ No label-dependent transformations here — those belong inside CV in Step 3.
 
 | Task | Step 2 | Step 3 |
 |------|--------|--------|
-| Correlation analysis | ✅ | ❌ |
-| Redundancy exploration (feature families) | ✅ | ❌ |
+| Cross-compartment derived features | ✅ | ❌ |
+| Correlation / redundancy analysis | ✅ | ❌ |
+| UMAP / t-SNE visualization | ✅ (exploratory only) | ❌ |
 | mRMR feature selection | ❌ | ✅ (inside CV) |
 | Stability Selection | ❌ | ✅ (inside CV) |
 | StandardScaler normalization | ❌ | ✅ (inside CV) |
-| UMAP / t-SNE visualization | ✅ (exploratory only) | ❌ |
 
-The hard rule: any operation that uses the label `target` must live inside CV in Step 3.
+**Hard rule**: any operation that uses the label `target` must live inside CV in Step 3.
+EDA plots that colour by class (2.4, 2.5) are descriptive only — they must not
+drive feature inclusion decisions. Declare this explicitly in the paper Methods.
 
 ---
 
-## Analysis Tasks
+## Part A — Derived Feature Computation
 
-### 2.1 — Feature redundancy
-Inter-feature Pearson correlation within each label block (NC, CE, ED).
-Goal: identify highly correlated feature families (shape, first-order, GLCM etc.)
-to inform the mRMR budget in Step 3.
+### Rationale
 
-Produce: heatmap per label block, list of feature families with >0.9 internal correlation.
+PyRadiomics computes features per compartment in isolation. But GBM biology is
+defined by the *relationship* between compartments, not by any single one.
+The RANO criteria themselves are relational: progression is declared when CE
+volume increases ≥25% relative to its nadir — not in absolute terms.
 
-### 2.2 — Delta feature analysis
-Distribution of delta features per class (Progressive vs Stable vs Response).
+Six cross-compartment features and three nadir-based features are added.
+All use only information available at time T (no leakage toward T+1).
+
+### Cross-compartment volumetric ratios
+
+Source feature: `{NC|CE|ED}_original_shape_MeshVolume`
+Use CT1 sequence for CE and NC; FLAIR for ED.
+
+```python
+ε = 1.0  # mm³ — avoids division by zero on near-absent compartments
+
+CE_NC_ratio        = CE_MeshVolume / (NC_MeshVolume + ε)
+ED_CE_ratio        = ED_MeshVolume / (CE_MeshVolume + ε)
+CE_fraction        = CE_MeshVolume / (CE + NC + ED + ε)
+total_tumor_volume = CE_MeshVolume + NC_MeshVolume + ED_MeshVolume
+```
+
+**Biological interpretation**:
+- `CE_NC_ratio`: high = active enhancing tumor dominates over necrosis (early
+  proliferative phase). Low = necrosis dominant (aggressive, hypoxic tumor).
+- `ED_CE_ratio`: high = edema disproportionate to enhancement (infiltrative
+  pattern, often associated with poor response to therapy).
+- `CE_fraction`: percentage of total tumor burden that is actively enhancing.
+  Decreases with response, increases with progression.
+- `total_tumor_volume`: overall tumor burden. Strongest single prognostic
+  predictor in many GBM studies.
+
+### Nadir-based features
+
+The nadir is the minimum CE volume the patient has achieved up to and including T.
+This directly encodes the clinical logic of RANO: progression is defined relative
+to the nadir, not the previous scan.
+
+**Critical implementation constraint**: compute nadir using only timepoints
+present in the parquet (complete features). Using a dropped timepoint as nadir
+reference would create an incoherent feature.
+
+```python
+# Computed per patient, chronologically up to T inclusive
+CE_vs_nadir      = CE_MeshVolume(T) / min(CE_MeshVolume[T0..T])
+weeks_since_nadir = time_from_diagnosis_weeks(T) - argmin_week(CE_MeshVolume[T0..T])
+is_nadir_scan    = (CE_MeshVolume(T) == min(CE_MeshVolume[T0..T]))
+```
+
+**Biological interpretation**:
+- `CE_vs_nadir`: > 1 means tumor has grown beyond its best response. The closest
+  radiomic proxy to the clinical RANO measurement.
+- `weeks_since_nadir`: two patients with identical `CE_vs_nadir` can be in
+  different phases — one just reached nadir, the other has been stable for months.
+- `is_nadir_scan`: flag analogous to `is_baseline_scan`. Tells the model that
+  delta = 0 at nadir reflects best response, not absent history.
+
+**Instability note**: with mean sequence length ~3.6, many patients will have
+`CE_vs_nadir = 1.0` at T=0 and T=1 (nadir = current scan by definition).
+This is correct behaviour. The model learns from `is_nadir_scan`.
+
+### Delta of derived features (2 only)
+
+```
+delta_CE_NC_ratio  = Δ(CE_NC_ratio) / interval_weeks
+delta_CE_vs_nadir  = Δ(CE_vs_nadir) / interval_weeks
+```
+
+Only these two have clear biological interpretation as rates of change.
+Deltas of the other four are omitted to control p >> n.
+
+### Output columns added (9 total)
+
+```
+CE_NC_ratio, ED_CE_ratio, CE_fraction, total_tumor_volume
+CE_vs_nadir, weeks_since_nadir, is_nadir_scan
+delta_CE_NC_ratio, delta_CE_vs_nadir
+```
+
+**File**: `src/preprocessing/feature_engineering.py`
+**Run**: `uv run -m src.preprocessing.feature_engineering`
+**Output**: `data/processed/dataset_engineered.parquet`
+
+---
+
+## Part B — Exploratory Analysis
+
+All plots are descriptive. They inform the paper but do not drive feature
+selection decisions.
+
+### 2.2 — Feature family redundancy
+
+Inter-feature Pearson correlation within each label block (NC, CE, ED),
+grouped by PyRadiomics family.
+
+Expected: GLRLM, GLSZM, GLDM are highly internally correlated (>0.9).
+Shape and firstorder are less redundant. Informs mRMR budget in Step 3.
+
+Produce: heatmap per label block + family-level redundancy summary table.
+
+### 2.3 — Shape feature cross-sequence consistency check
+
+Shape features (MeshVolume, Sphericity, Maximum3DDiameter) depend only on the
+mask, not image intensity — they should be identical across CT1/T1/T2/FLAIR
+for the same compartment. Verify this as a data quality check.
+
+If shape features differ across sequences → segmentation inconsistency.
+Report in paper Methods.
+
+### 2.4 — Delta feature distributions by class (descriptive only)
+
+Box plots of key delta features per class (Progressive / Stable / Response).
 Goal: visual evidence that rate-of-change features carry signal.
-Flag features where delta distribution is indistinguishable across classes.
 
-### 2.3 — Temporal feature analysis
-Distribution of interval_weeks, scan_index, time_from_diagnosis_weeks by class.
-Goal: quantify clinical workflow leakage signal strength before running models.
-This is the pre-modelling version of ablation B from Step 3.
+⚠️ Uses label for colouring — descriptive only, must not drive selection.
 
-### 2.4 — Sequence length distribution
-Histogram of n_timepoints per patient, broken down by class.
-Goal: document the ~3.6 mean sequence length limitation for the paper.
+### 2.5 — Temporal feature distributions by class (descriptive only)
 
-### 2.5 — UMAP visualization (exploratory only)
-UMAP on the 1284 radiomic features, colored by RANO class.
-Goal: visual sanity check — do classes form separable clusters?
-NOT used as model input. Figures only.
+Distribution of interval_weeks, scan_index, time_from_diagnosis_weeks,
+weeks_since_nadir by class. Pre-modelling version of ablation B from Step 3.
+
+⚠️ Same warning as 2.4.
+
+### 2.6 — Sequence length distribution
+
+Histogram of n_timepoints per patient by class.
+Documents the ~3.6 mean sequence length limitation for paper Limitations.
+
+### 2.7 — UMAP visualization (exploratory only)
+
+UMAP on original radiomic + 9 derived features, coloured by RANO class.
+Visual sanity check. Paper figures only — NOT model input.
+
+### 2.8 — Temporal autocorrelation (t vs t+1)
+
+For each radiomic + derived feature, compute Pearson correlation between
+consecutive timepoints using the `*_prev` columns already present in the parquet.
+
+```python
+# corr(f_t, f_{t-1}) across all consecutive pairs
+autocorr = {col: df[col].corr(df[col + "_prev"])
+            for col in feature_cols if col + "_prev" in df.columns}
+```
+
+Interpret:
+- `corr > 0.9` → low dynamics, delta features carry most signal
+- `corr < 0.5` → high dynamics, absolute values also informative
+
+Report mean autocorrelation per PyRadiomics family. Informs model design
+discussion in paper and explains delta feature importance in Step 3.
+
+⚠️ Descriptive only — does not drive feature selection.
+
+---
+
+## PyRadiomics Feature Families — Biological Reference
+
+| Family | N | Biological meaning | Reliability on auto-segmentation |
+|--------|---|--------------------|----------------------------------|
+| shape | 14 | Volume, diameter, sphericity, surface | High — mask-only, image-independent |
+| firstorder | 18 | Intensity statistics (mean, entropy, percentiles) | Medium |
+| glcm | 24 | Local texture — co-occurrence of intensity pairs | Medium-low |
+| glrlm | 16 | Run-length patterns | Low |
+| glszm | 16 | Zone-size patterns | Low |
+| gldm | 14 | Dependency patterns | Low |
+| ngtdm | 5 | Neighborhood tone difference | Medium-low |
+
+**Most clinically interpretable features per compartment**:
+
+| Compartment | Sequence | Features | Clinical rationale |
+|-------------|----------|----------|--------------------|
+| CE | CT1 | MeshVolume, Maximum3DDiameter, Sphericity | RANO measurement basis |
+| CE | CT1 | SurfaceVolumeRatio, JointEntropy | Infiltrativity + heterogeneity |
+| CE | CT1 | firstorder_Mean, firstorder_90Percentile | Contrast uptake intensity |
+| NC | T1 | MeshVolume, firstorder_Entropy | Necrotic burden + heterogeneity |
+| ED | FLAIR | MeshVolume, firstorder_Mean | Vasogenic edema load |
 
 ---
 
 ## Outputs
 
 ```
-notebooks/step2_feature_engineering.ipynb   — full analysis
-configs/feature_engineering.yaml           — constants derived here:
-    high_correlation_threshold: 0.9
-    delta_signal_features: [...]            — features with clear class separation
-    expected_feature_families: [shape, firstorder, glcm, glrlm, glszm, gldm, ngtdm]
+data/processed/dataset_engineered.parquet
+notebooks/step2_feature_engineering.ipynb
+configs/feature_engineering.yaml:
+    epsilon: 1.0
+    volume_features:
+        CE: CE_CT1_original_shape_MeshVolume
+        NC: NC_CT1_original_shape_MeshVolume
+        ED: ED_FLAIR_original_shape_MeshVolume
+    derived_features:
+        - CE_NC_ratio
+        - ED_CE_ratio
+        - CE_fraction
+        - total_tumor_volume
+        - CE_vs_nadir
+        - weeks_since_nadir
+        - is_nadir_scan
+        - delta_CE_NC_ratio
+        - delta_CE_vs_nadir
 ```
 
 ---
 
 ## Definition of Done
 
+- [ ] `feature_engineering.py` implemented and passing unit tests
+- [ ] `dataset_engineered.parquet`: 231 rows, 2576 + 9 columns, zero NaN
+- [ ] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
+- [ ] Nadir computed from parquet timepoints only (not raw RANO)
+- [ ] Shape feature cross-sequence consistency check done
 - [ ] Correlation heatmaps saved to `notebooks/figures/`
-- [ ] Delta distribution plots saved per class
-- [ ] Temporal feature distributions documented
 - [ ] Sequence length histogram saved
 - [ ] `feature_engineering.yaml` committed
+- [ ] EDA plots documented as descriptive-only in notebook markdown
 - [ ] No label-dependent operations performed outside CV
+- [ ] Temporal autocorrelation analysis saved to `notebooks/figures/`
