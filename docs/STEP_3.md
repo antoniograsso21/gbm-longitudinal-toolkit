@@ -4,7 +4,7 @@
 Establish rigorous performance baselines and run feature selection inside CV.
 These results are the scientific benchmark against which the GNN in Step 4 is evaluated.
 
-**Input**: `data/processed/dataset_paired.parquet`
+**Input**: `data/processed/dataset_engineered.parquet`
 **Output**: MLflow experiment `baselines/` + `configs/selected_features.yaml`
 
 ---
