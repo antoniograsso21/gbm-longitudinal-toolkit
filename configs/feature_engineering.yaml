@@ -1,0 +1,28 @@
+# configs/feature_engineering.yaml
+# ===================================
+# Parameters for src/preprocessing/feature_engineering.py
+# This file is documentation — parameters are hardcoded in the script.
+# Update both if you change a value.
+
+epsilon: 1.0  # mm³ — prevents division by zero on near-absent compartments
+
+volume_features:
+  CE: CE_CT1_original_shape_MeshVolume  # contrast-enhanced T1 (RANO reference)
+  NC: NC_CT1_original_shape_MeshVolume  # necrosis on contrast-enhanced T1
+  ED: ED_FLAIR_original_shape_MeshVolume  # edema on FLAIR (clinical standard)
+
+derived_features:
+  cross_compartment:
+    - CE_NC_ratio         # CE_volume / (NC_volume + ε)
+    - ED_CE_ratio         # ED_volume / (CE_volume + ε)
+    - CE_fraction         # CE_volume / (CE + NC + ED + ε)
+    - total_tumor_volume  # CE + NC + ED volumes
+
+  nadir_based:
+    - CE_vs_nadir         # (CE_volume + ε) / (min(CE_volume[T0..T]) + ε)
+    - weeks_since_nadir   # time(T) - time(nadir)
+    - is_nadir_scan       # True when CE_volume(T) == min(CE_volume[T0..T])
+
+  delta_derived:
+    - delta_CE_NC_ratio   # Δ(CE_NC_ratio) / interval_weeks
+    - delta_CE_vs_nadir   # Δ(CE_vs_nadir) / interval_weeks
