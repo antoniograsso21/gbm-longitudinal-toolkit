@@ -144,7 +144,7 @@ implemented and passing validation.
    ```bash
    uv run -m src.audit.lumiere_audit
    uv run -m src.preprocessing.dataset_builder
-   uv run -m src.audit.dataset_validator
+   uv run -m src.validation.dataset_validator
    ```
 
    This produces:

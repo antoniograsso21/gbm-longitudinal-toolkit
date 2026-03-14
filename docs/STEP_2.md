@@ -18,12 +18,12 @@ Two things happen here, in strict order:
 
 **Scripts**:
 - `src/preprocessing/features_builder.py`
-- `src/audit/features_validator.py`
+- `src/validation/features_validator.py`
 
 **Run**:
 ```bash
 uv run -m src.preprocessing.features_builder
-uv run -m src.audit.features_validator
+uv run -m src.validation.features_validator
 ```
 
 ---

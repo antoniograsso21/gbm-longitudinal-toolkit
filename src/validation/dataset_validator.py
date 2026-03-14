@@ -1,5 +1,5 @@
 """
-src/audit/dataset_validator.py
+src/validation/dataset_validator.py
 =====================================
 Runs 11 assertions on dataset_paired.parquet to verify preprocessing integrity.
 
@@ -19,7 +19,7 @@ Assertions:
     W1. Survival bias check (informational — WARN not FAIL)
 
 Usage:
-    python -m src.audit.dataset_validator
+    python -m src.validation.dataset_validator
 """
 
 import json

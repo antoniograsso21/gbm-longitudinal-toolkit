@@ -6,12 +6,12 @@ This parquet is the single input consumed by all subsequent steps.
 
 **Scripts**:
 - `src/preprocessing/dataset_builder.py`
-- `src/audit/dataset_validator.py`
+- `src/validation/dataset_validator.py`
 
 **Run**:
 ```bash
 uv run -m src.preprocessing.dataset_builder
-uv run -m src.audit.dataset_validator
+uv run -m src.validation.dataset_validator
 ```
 
 **Outputs**:

@@ -271,7 +271,7 @@ gbm-longitudinal-toolkit/
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py
-│   │                           # dataset_validator.py, features_validator.py
+│   ├── validation/             # dataset_validator.py, features_validator.py
 │   │                           # graphs_validator.py
 │   ├── preprocessing/          # dataset_builder.py, features_builder.py
 │   ├── graphs/                 # graphs_builder.py
@@ -366,8 +366,8 @@ Notes:
     corresponding `validate_*.py` in `src/audit/`. The validator runs after the producer,
     saves a JSON report to `data/processed/`, and exits with code 1 on any FAIL so DVC
     and CI detect regressions automatically. Step 0 (audit) is exempt — it is itself a
-    validation pass. Naming convention: `dataset_validator.py`, `features_validator.py`,
-    `graphs_validator.py`, etc. — semantic names, not step numbers.
+    validation pass. Naming convention: `src/validation/dataset_validator.py`, `features_validator.py`,
+    `graphs_validator.py`, etc. — all live in `src/validation/`. — semantic names, not step numbers.
 
 ---
 

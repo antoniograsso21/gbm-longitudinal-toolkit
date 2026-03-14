@@ -231,7 +231,7 @@ def print_section(title: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Validation utilities (shared across dataset_validator, features_validator,
+# Validation utilities (shared across src/validation/ scripts —
 # validate_graphs — DRY: never duplicate these helpers in per-step files)
 # ---------------------------------------------------------------------------
 import json

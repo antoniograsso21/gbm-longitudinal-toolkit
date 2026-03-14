@@ -1,5 +1,5 @@
 """
-src/audit/features_validator.py
+src/validation/features_validator.py
 ================================
 Runs 10 assertions on dataset_engineered.parquet to verify feature
 engineering integrity.
@@ -19,7 +19,7 @@ Assertions:
     10. scan_index is 0-based and contiguous per patient
 
 Usage:
-    python -m src.audit.features_validator
+    python -m src.validation.features_validator
 """
 
 from pathlib import Path
