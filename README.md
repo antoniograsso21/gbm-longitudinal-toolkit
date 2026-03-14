@@ -92,9 +92,11 @@ gbm-longitudinal-toolkit/
 │   └── processed/             # audit, parquet, validation reports
 ├── src/
 │   ├── utils/                 # LUMIERE-specific I/O and parsing (lumiere_io.py)
-│   ├── audit/                 # lumiere_audit.py, dataset_validator.py
+│   ├── audit/                 # lumiere_audit.py
+│   ├── validation/            # dataset_validator.py, features_validator.py
+│   │                          # graphs_validator.py (Step 4)
 │   ├── preprocessing/         # dataset_builder.py, features_builder.py
-│   ├── graphs/                # graphs_builder.py, temporal sequences
+│   ├── graphs/                # graphs_builder.py, graphs_validator.py (Step 4)
 │   ├── models/                # logistic_baseline.py, gbm_baseline.py, lstm_baseline.py, gnn.py
 │   ├── training/              # CV loops, metrics, MLflow integration
 │   ├── interpretability/      # SHAP, attention, Integrated Gradients, clinical_summary.py
@@ -157,11 +159,13 @@ implemented and passing validation.
 
    ```bash
    uv run -m src.preprocessing.features_builder
+   uv run -m src.validation.features_validator
    ```
 
    This produces:
    - `data/processed/dataset_engineered.parquet` (231×2585, +9 derived features)
    - `data/processed/features_builder_report.json`
+   - `data/processed/features_validator_report.json`
 
 4. **Explore the design**
    - Read `CONTEXT.md` for the scientific rationale.
