@@ -12,6 +12,7 @@ Add CLI entry points, DVC pipeline, and a new-dataset tutorial.
 ```
 dataset_config.yaml      — dataset-specific params (generalised in Step 7)
 graph_config.yaml        — node order, edge features, label mapping
+features_builder.yaml    — feature engineering params (epsilon, volume cols)
 feature_selector.yaml    — mRMR params, stability threshold
 logistic_baseline.yaml
 gbm_baseline.yaml
@@ -22,8 +23,8 @@ conformal.yaml
 
 ### 7.2 — CLI Entry Points
 ```bash
-uv run -m src.preprocessing.build_dataset
-uv run -m src.graphs.graph_builder
+uv run -m src.preprocessing.dataset_builder
+uv run -m src.graphs.graphs_builder
 uv run -m src.training.run_baselines --config configs/gbm_baseline.yaml
 uv run -m src.training.run_gnn --config configs/gnn.yaml
 uv run -m src.uncertainty.run_conformal --config configs/conformal.yaml

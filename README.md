@@ -94,12 +94,12 @@ gbm-longitudinal-toolkit/
 │   ├── utils/                 # LUMIERE-specific I/O and parsing (lumiere_io.py)
 │   ├── audit/                 # lumiere_audit.py, dataset_validator.py
 │   ├── preprocessing/         # dataset_builder.py, features_builder.py
-│   ├── graphs/                # graph_builder.py, temporal sequences
+│   ├── graphs/                # graphs_builder.py, temporal sequences
 │   ├── models/                # logistic_baseline.py, gbm_baseline.py, lstm_baseline.py, gnn.py
 │   ├── training/              # CV loops, metrics, MLflow integration
 │   ├── interpretability/      # SHAP, attention, Integrated Gradients, clinical_summary.py
 │   └── uncertainty/           # conformal prediction utilities
-├── configs/                   # YAML configs (models, graphs, conformal, feature_engineering.yaml)
+├── configs/                   # YAML configs (models, graphs, conformal, features_builder.yaml)
 ├── docs/                      # STEP_0.md … STEP_8.md
 ├── experiments/               # optional MLflow runs
 ├── notebooks/                 # exploratory analyses (not production)

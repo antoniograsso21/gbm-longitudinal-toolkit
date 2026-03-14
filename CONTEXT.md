@@ -272,9 +272,9 @@ gbm-longitudinal-toolkit/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py
 │   │                           # dataset_validator.py, features_validator.py
-│   │                           # validate_graphs.py (Step 4)
+│   │                           # graphs_validator.py
 │   ├── preprocessing/          # dataset_builder.py, features_builder.py
-│   ├── graphs/                 # graph_builder.py
+│   ├── graphs/                 # graphs_builder.py
 │   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
 │   │                           # lstm_baseline.py, gnn.py, temporal_attention.py
 │   ├── training/               # trainer.py, cross_validation.py, metrics.py
@@ -284,7 +284,7 @@ gbm-longitudinal-toolkit/
 ├── tests/
 ├── experiments/                # MLflow runs
 ├── notebooks/                  # EDA — not production
-├── configs/                    # model parameter YAMLs (feature_engineering.yaml, ...)
+├── configs/                    # model parameter YAMLs (features_builder.yaml, ...)
 ├── docs/                       # STEP_0.md ... STEP_8.md
 ├── FUTURE.md
 ├── CONTEXT.md
@@ -367,7 +367,7 @@ Notes:
     saves a JSON report to `data/processed/`, and exits with code 1 on any FAIL so DVC
     and CI detect regressions automatically. Step 0 (audit) is exempt — it is itself a
     validation pass. Naming convention: `dataset_validator.py`, `features_validator.py`,
-    `validate_graphs.py`, etc. — semantic names, not step numbers.
+    `graphs_validator.py`, etc. — semantic names, not step numbers.
 
 ---
 

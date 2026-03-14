@@ -49,9 +49,9 @@ initial representations even before message passing.
 y = target_encoded (RANO class at t+1)
 ```
 
-**File**: `src/graphs/graph_builder.py`
+**File**: `src/graphs/graphs_builder.py`
 **Key classes**: `GraphConfig`, `PatientGraphSequence`
-**Validation**: `validate_graphs()` — asserts shape invariants on every graph
+**Validation**: `graphs_validator.py — asserts` — asserts shape invariants on every graph
 
 Also build HD-GLIO-AUTO 2-node graphs for ablation (same architecture, 2 nodes).
 
@@ -115,10 +115,11 @@ A5 = temporal-only ablation B from Step 3 — already computed.
 
 ## Definition of Done
 
-- [ ] `graph_builder.py` implemented and unit tested
+- [ ] `graphs_builder.py` implemented and unit tested
+- [ ] `graphs_validator.py` passing all structural assertions
 - [ ] 3-node graphs built and saved for all 64 patients
 - [ ] 2-node graphs built for HD-GLIO-AUTO (ablation A6)
-- [ ] `validate_graphs()` passing all structural assertions
+- [ ] `graphs_validator.py — asserts` passing all structural assertions
 - [ ] TumorTemporalGNN implemented and unit tested
 - [ ] CV training loop with early stopping and MLflow logging
 - [ ] Class-weighted loss implemented

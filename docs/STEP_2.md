@@ -13,8 +13,8 @@ Two things happen here, in strict order:
 - `data/processed/dataset_engineered.parquet` — adds 9 derived features
 - `data/processed/features_builder_report.json`
 - `data/processed/features_validator_report.json`
-- `notebooks/step2_feature_engineering.ipynb`
-- `configs/feature_engineering.yaml`
+- `notebooks/features_eda.ipynb`
+- `configs/features_builder.yaml`
 
 **Scripts**:
 - `src/preprocessing/features_builder.py`
@@ -252,8 +252,8 @@ Interpret:
 
 ```
 data/processed/dataset_engineered.parquet
-notebooks/step2_feature_engineering.ipynb
-configs/feature_engineering.yaml:
+notebooks/features_eda.ipynb
+configs/features_builder.yaml:
     epsilon: 1.0
     volume_features:
         CE: CE_CT1_original_shape_MeshVolume
@@ -339,7 +339,7 @@ non in `NON_FEATURE_COLS`, esclusivamente dentro il CV loop.
 - [x] Shape feature cross-sequence consistency check done
 - [x] Correlation heatmaps saved to `notebooks/figures/`
 - [x] Sequence length histogram saved
-- [x] `feature_engineering.yaml` committed
+- [x] `features_builder.yaml` committed
 - [x] EDA plots documented as descriptive-only in notebook markdown
 - [x] No label-dependent operations performed outside CV
 - [x] Temporal autocorrelation analysis saved to `notebooks/figures/`
