@@ -66,3 +66,117 @@ stages:
       hash: md5
       md5: 24f6ee7bc76c5b73d8c0553fe595b8e3
       size: 604
+  lumiere_audit:
+    cmd: uv run -m src.audit.lumiere_audit
+    deps:
+    - path: data/raw/lumiere/
+      hash: md5
+      md5: 272f9fe6de95946b7f62ec784105c77c.dir
+      size: 35366894
+      nfiles: 5
+    - path: src/audit/lumiere_audit.py
+      hash: md5
+      md5: e40e37801150137d451d6f195d028ab2
+      size: 27034
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 577cd373568d0ee66d0fe0f292ca3ab3
+      size: 13541
+    outs:
+    - path: data/processed/audit/dataset_stats.json
+      hash: md5
+      md5: 39fdb0575fbfe8309d5706c291db37e9
+      size: 3787
+  dataset_builder:
+    cmd: uv run -m src.preprocessing.dataset_builder
+    deps:
+    - path: data/raw/lumiere/
+      hash: md5
+      md5: 272f9fe6de95946b7f62ec784105c77c.dir
+      size: 35366894
+      nfiles: 5
+    - path: src/preprocessing/dataset_builder.py
+      hash: md5
+      md5: 61b7dca2bde5259b385e35a20665d51f
+      size: 21174
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 577cd373568d0ee66d0fe0f292ca3ab3
+      size: 13541
+    outs:
+    - path: data/processed/preprocessing/dataset_builder_report.json
+      hash: md5
+      md5: f84880b975f674c25a16f3d857e34d8c
+      size: 1307
+    - path: data/processed/preprocessing/dataset_paired.parquet
+      hash: md5
+      md5: a5ebfb48a67dda271d56ae861dfbe930
+      size: 6849940
+  dataset_validator:
+    cmd: uv run -m src.validation.dataset_validator
+    deps:
+    - path: data/processed/preprocessing/dataset_paired.parquet
+      hash: md5
+      md5: a5ebfb48a67dda271d56ae861dfbe930
+      size: 6849940
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 577cd373568d0ee66d0fe0f292ca3ab3
+      size: 13541
+    - path: src/validation/dataset_validator.py
+      hash: md5
+      md5: b9d7086c1482a3011c9c79097c727ae7
+      size: 10602
+    outs:
+    - path: data/processed/validation/dataset_validator_report.json
+      hash: md5
+      md5: 7598de4f4781144b5d0dbeb350aa1d6f
+      size: 753
+  features_builder:
+    cmd: uv run -m src.preprocessing.features_builder
+    deps:
+    - path: configs/features_builder.yaml
+      hash: md5
+      md5: 8ecd4e61182f7a3f79c6b67af02c84f4
+      size: 1194
+    - path: data/processed/preprocessing/dataset_paired.parquet
+      hash: md5
+      md5: a5ebfb48a67dda271d56ae861dfbe930
+      size: 6849940
+    - path: src/preprocessing/features_builder.py
+      hash: md5
+      md5: 82038be37a98a15dec19168e9e953f0a
+      size: 13414
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 577cd373568d0ee66d0fe0f292ca3ab3
+      size: 13541
+    outs:
+    - path: data/processed/preprocessing/dataset_engineered.parquet
+      hash: md5
+      md5: 631eee92469df0c5c84ada3b1cb3cc88
+      size: 6868266
+    - path: data/processed/preprocessing/features_builder_report.json
+      hash: md5
+      md5: 670064248837eda16128405218ae418e
+      size: 412
+  features_validator:
+    cmd: uv run -m src.validation.features_validator
+    deps:
+    - path: data/processed/preprocessing/dataset_engineered.parquet
+      hash: md5
+      md5: 631eee92469df0c5c84ada3b1cb3cc88
+      size: 6868266
+    - path: src/utils/lumiere_io.py
+      hash: md5
+      md5: 577cd373568d0ee66d0fe0f292ca3ab3
+      size: 13541
+    - path: src/validation/features_validator.py
+      hash: md5
+      md5: 74156fc601e4313e92a6d5929b6f8a13
+      size: 10620
+    outs:
+    - path: data/processed/validation/features_validator_report.json
+      hash: md5
+      md5: f8d41ffe86a634111598b0220d29e7e5
+      size: 583
