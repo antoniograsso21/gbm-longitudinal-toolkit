@@ -58,8 +58,13 @@ The end-to-end pipeline is split into documented steps (`docs/STEP_*.md`):
 - **Step 1 – Preprocessing + Validation**:  
   build `dataset_paired.parquet` (231×2576, 1 row = (patient, timepoint)),  
   run strict validation (n_effective, leakage checks, NaN/inf, monotonic time).
-- **Step 2 – Feature engineering (exploratory)**:  
-  correlation maps, delta distributions, temporal distributions, UMAP (viz only).
+- **Step 2 – Feature Engineering**:  
+  9 label-free derived features added → `dataset_engineered.parquet` (231×2585).  
+  Cross-compartment ratios (CE_NC_ratio, ED_CE_ratio, CE_fraction, total_tumor_volume),  
+  nadir-based features (CE_vs_nadir, weeks_since_nadir, is_nadir_scan),  
+  delta of derived features (delta_CE_NC_ratio, delta_CE_vs_nadir).  
+  EDA: correlation maps, shape consistency check, delta distributions,  
+  temporal distributions, UMAP (visualisation only), temporal autocorrelation.
 - **Step 3 – Baseline models**:  
   StratifiedGroupKFold, **feature selection inside CV** (mRMR + Stability Selection),
   LR, LightGBM+SHAP, LSTM, temporal-feature ablations to quantify leakage.
@@ -88,13 +93,13 @@ gbm-longitudinal-toolkit/
 ├── src/
 │   ├── utils/                 # LUMIERE-specific I/O and parsing (lumiere_io.py)
 │   ├── audit/                 # lumiere_audit.py, validate_dataset.py
-│   ├── preprocessing/         # build_dataset.py (label shift, Δ features, etc.)
+│   ├── preprocessing/         # build_dataset.py, feature_engineering.py
 │   ├── graphs/                # graph_builder.py, temporal sequences
 │   ├── models/                # logistic_baseline.py, gbm_baseline.py, lstm_baseline.py, gnn.py
 │   ├── training/              # CV loops, metrics, MLflow integration
 │   ├── interpretability/      # SHAP, attention, Integrated Gradients, clinical_summary.py
 │   └── uncertainty/           # conformal prediction utilities
-├── configs/                   # YAML configs (models, graphs, conformal, feature engineering)
+├── configs/                   # YAML configs (models, graphs, conformal, feature_engineering.yaml)
 ├── docs/                      # STEP_0.md … STEP_8.md
 ├── experiments/               # optional MLflow runs
 ├── notebooks/                 # exploratory analyses (not production)
@@ -127,7 +132,8 @@ to be installed via extras or environment files as the implementation matures.
 
 ## Quick start (current status)
 
-The **audit and preprocessing pipeline (Steps 0–1)** is implemented and passing validation.
+The **audit, preprocessing, and feature engineering pipeline (Steps 0–2)** is
+implemented and passing validation.
 
 1. **Prepare the data**
    - Download LUMIERE CSVs and place them under `data/raw/lumiere/`.
@@ -147,7 +153,17 @@ The **audit and preprocessing pipeline (Steps 0–1)** is implemented and passin
    - `data/processed/preprocessing_report.json`
    - `data/processed/validation_report.json`
 
-3. **Explore the design**
+3. **Run feature engineering**
+
+   ```bash
+   uv run -m src.preprocessing.feature_engineering
+   ```
+
+   This produces:
+   - `data/processed/dataset_engineered.parquet` (231×2585, +9 derived features)
+   - `data/processed/feature_engineering_report.json`
+
+4. **Explore the design**
    - Read `CONTEXT.md` for the scientific rationale.
    - Read `docs/STEP_3.md`–`STEP_6.md` for the planned modelling, GNN, and UQ pipeline.
 
@@ -168,4 +184,4 @@ If you build on this work, you can cite:
 
 > Grasso A. *gbm-longitudinal-toolkit: open-source framework for longitudinal radiomics in glioblastoma.* GitHub repository, 2026–.
 
-This project is released under the **MIT License** (see `LICENSE`). 
+This project is released under the **MIT License** (see `LICENSE`).

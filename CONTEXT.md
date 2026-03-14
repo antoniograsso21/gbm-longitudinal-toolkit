@@ -138,6 +138,7 @@ Step 1 — Preprocessing + Validation
     dataset_paired.parquet: 231 rows, 2576 columns
     ↓
 Step 2 — Feature Engineering (exploratory, no label-dependent selection)
+    dataset_engineered.parquet: 231 rows, 2585 columns (+9 derived features)
     ↓
 Step 3 — Baseline Models (LR → LightGBM+SHAP → LSTM)
     feature selection mRMR + Stability Selection inside CV here
@@ -213,14 +214,48 @@ Step 8 — Paper (bioRxiv preprint)
 
 Output schema — dataset_paired.parquet:
 ```
-Patient, Timepoint                     — identifiers
-target, target_encoded                 — RANO(t+1), integer-encoded
-interval_weeks                         — weeks T → T+1
-time_from_diagnosis_weeks              — week_num of scan T
-scan_index                             — 0-based ordinal per patient
-{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feat}   — 1284 radiomic features
+Patient, Timepoint                         — identifiers
+target, target_encoded                     — RANO(t+1), integer-encoded
+interval_weeks                             — weeks T → T+1
+time_from_diagnosis_weeks                  — week_num of scan T
+scan_index                                 — 0-based ordinal per patient
+is_baseline_scan                           — True for first scan per patient
+{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feat}       — 1284 radiomic features
 delta_{NC|CE|ED}_{CT1|T1|T2|FLAIR}_{feat} — 1284 delta features
-is_baseline_scan                       — True for first scan per patient
+```
+
+---
+
+## Feature Engineering Summary (see STEP_2.md for detail)
+9 derived features added to dataset_engineered.parquet. All label-free.
+
+Cross-compartment (4):
+- CE_NC_ratio        — CE / (NC + ε): active tumor vs necrosis balance
+- ED_CE_ratio        — ED / (CE + ε): edema disproportionality
+- CE_fraction        — CE / (CE + NC + ED + ε): enhancing fraction of total burden
+- total_tumor_volume — CE + NC + ED: overall tumor burden
+
+Nadir-based (3) — computed per patient, chronologically up to T inclusive:
+- CE_vs_nadir        — (CE(T) + ε) / (min(CE[T0..T]) + ε): closest radiomic proxy to RANO criterion
+- weeks_since_nadir  — weeks elapsed since best response
+- is_nadir_scan      — True when CE(T) == min(CE[T0..T])
+
+Delta of derived (2):
+- delta_CE_NC_ratio  — Δ(CE_NC_ratio) / interval_weeks
+- delta_CE_vs_nadir  — Δ(CE_vs_nadir) / interval_weeks
+
+EDA findings (informative, not prescriptive):
+- Shape consistency: all shape features identical across sequences ✅
+- Redundancy: low across all families (max 9% pairs with |r|>0.9) — keep all in mRMR pool
+- Autocorrelation: mean r 0.43–0.54 across families — system is highly dynamic,
+  both absolute values and deltas carry predictive signal
+
+Output schema — dataset_engineered.parquet:
+```
+[all columns from dataset_paired.parquet]
+CE_NC_ratio, ED_CE_ratio, CE_fraction, total_tumor_volume  — cross-compartment
+CE_vs_nadir, weeks_since_nadir, is_nadir_scan              — nadir-based
+delta_CE_NC_ratio, delta_CE_vs_nadir                       — delta derived
 ```
 
 ---
@@ -234,7 +269,7 @@ gbm-longitudinal-toolkit/
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py, validate_dataset.py
-│   ├── preprocessing/          # build_dataset.py
+│   ├── preprocessing/          # build_dataset.py, feature_engineering.py
 │   ├── graphs/                 # graph_builder.py
 │   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
 │   │                           # lstm_baseline.py, gnn.py, temporal_attention.py
@@ -245,7 +280,7 @@ gbm-longitudinal-toolkit/
 ├── tests/
 ├── experiments/                # MLflow runs
 ├── notebooks/                  # EDA — not production
-├── configs/                    # model parameter YAMLs
+├── configs/                    # model parameter YAMLs (feature_engineering.yaml, ...)
 ├── docs/                       # STEP_0.md ... STEP_8.md
 ├── FUTURE.md
 ├── CONTEXT.md
@@ -258,7 +293,7 @@ gbm-longitudinal-toolkit/
 ## Roadmap
 - Step 0 — Audit ✅
 - Step 1 — Preprocessing + Validation ✅
-- Step 2 — Feature Engineering ⏳
+- Step 2 — Feature Engineering ✅
 - Step 3 — Baseline Models
 - Step 4 — Graph Construction + GNN
 - Step 5 — Interpretability

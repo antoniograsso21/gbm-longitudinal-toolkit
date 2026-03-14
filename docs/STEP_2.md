@@ -1,4 +1,4 @@
-# Step 2 — Feature Engineering ⏳
+# Step 2 — Feature Engineering ✅
 
 ## Objective
 Two things happen here, in strict order:
@@ -81,10 +81,13 @@ reference would create an incoherent feature.
 
 ```python
 # Computed per patient, chronologically up to T inclusive
-CE_vs_nadir      = CE_MeshVolume(T) / min(CE_MeshVolume[T0..T])
+CE_vs_nadir       = (CE_MeshVolume(T) + ε) / (min(CE_MeshVolume[T0..T]) + ε)
 weeks_since_nadir = time_from_diagnosis_weeks(T) - argmin_week(CE_MeshVolume[T0..T])
-is_nadir_scan    = (CE_MeshVolume(T) == min(CE_MeshVolume[T0..T]))
+is_nadir_scan     = (CE_MeshVolume(T) == min(CE_MeshVolume[T0..T]))
 ```
+
+Note: ε is added to both numerator and denominator to preserve the `>= 1.0`
+property under floating-point arithmetic.
 
 **Biological interpretation**:
 - `CE_vs_nadir`: > 1 means tumor has grown beyond its best response. The closest
@@ -132,8 +135,10 @@ selection decisions.
 Inter-feature Pearson correlation within each label block (NC, CE, ED),
 grouped by PyRadiomics family.
 
-Expected: GLRLM, GLSZM, GLDM are highly internally correlated (>0.9).
-Shape and firstorder are less redundant. Informs mRMR budget in Step 3.
+**Result**: redundancy is surprisingly low across all families — no family
+exceeds 9% of pairs with |r| > 0.9. Shape is the most redundant (mean |r| ~0.55),
+as expected from geometric covariance. This justifies keeping all families
+in the mRMR pool in Step 3 rather than excluding any a priori.
 
 Produce: heatmap per label block + family-level redundancy summary table.
 
@@ -143,8 +148,8 @@ Shape features (MeshVolume, Sphericity, Maximum3DDiameter) depend only on the
 mask, not image intensity — they should be identical across CT1/T1/T2/FLAIR
 for the same compartment. Verify this as a data quality check.
 
-If shape features differ across sequences → segmentation inconsistency.
-Report in paper Methods.
+**Result**: all shape features identical across sequences (max_abs_diff = 0.0
+for all compartment/feature/sequence pairs). Segmentation is consistent. ✅
 
 ### 2.4 — Delta feature distributions by class (descriptive only)
 
@@ -172,21 +177,35 @@ Visual sanity check. Paper figures only — NOT model input.
 
 ### 2.8 — Temporal autocorrelation (t vs t+1)
 
-For each radiomic + derived feature, compute Pearson correlation between
-consecutive timepoints using the `*_prev` columns already present in the parquet.
+For each radiomic feature, compute Pearson correlation between consecutive
+timepoints using `groupby + shift` on the sorted parquet (no `_prev` columns
+exist — `build_dataset.py` stores delta rates, not raw previous values).
 
 ```python
-# corr(f_t, f_{t-1}) across all consecutive pairs
-autocorr = {col: df[col].corr(df[col + "_prev"])
-            for col in feature_cols if col + "_prev" in df.columns}
+df_sorted = df.sort_values(["Patient", "time_from_diagnosis_weeks"])
+for col in radiomic_cols:
+    prev = df_sorted.groupby("Patient")[col].shift(1)
+    mask = prev.notna()  # excludes baseline scans
+    r = df_sorted.loc[mask, col].corr(prev[mask])
 ```
+
+**Result**: all families show low autocorrelation (mean r between 0.43 and 0.54).
+The system is highly dynamic — absolute values and delta features both carry
+predictive signal. This justifies the delta-graph architecture (Step 4).
+
+| Family | mean r | median r |
+|--------|--------|----------|
+| shape | 0.540 | 0.524 |
+| firstorder | 0.466 | 0.470 |
+| glszm | 0.452 | 0.467 |
+| ngtdm | 0.440 | 0.449 |
+| glcm | 0.439 | 0.450 |
+| glrlm | 0.439 | 0.462 |
+| gldm | 0.428 | 0.436 |
 
 Interpret:
 - `corr > 0.9` → low dynamics, delta features carry most signal
 - `corr < 0.5` → high dynamics, absolute values also informative
-
-Report mean autocorrelation per PyRadiomics family. Informs model design
-discussion in paper and explains delta feature importance in Step 3.
 
 ⚠️ Descriptive only — does not drive feature selection.
 
@@ -243,14 +262,14 @@ configs/feature_engineering.yaml:
 
 ## Definition of Done
 
-- [ ] `feature_engineering.py` implemented and passing unit tests
-- [ ] `dataset_engineered.parquet`: 231 rows, 2576 + 9 columns, zero NaN
-- [ ] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
-- [ ] Nadir computed from parquet timepoints only (not raw RANO)
-- [ ] Shape feature cross-sequence consistency check done
-- [ ] Correlation heatmaps saved to `notebooks/figures/`
-- [ ] Sequence length histogram saved
-- [ ] `feature_engineering.yaml` committed
-- [ ] EDA plots documented as descriptive-only in notebook markdown
-- [ ] No label-dependent operations performed outside CV
-- [ ] Temporal autocorrelation analysis saved to `notebooks/figures/`
+- [x] `feature_engineering.py` implemented and passing unit tests
+- [x] `dataset_engineered.parquet`: 231 rows, 2576 + 9 columns, zero NaN
+- [x] `is_nadir_scan` verified: is_nadir_scan == True only when CE_vs_nadir == 1.0
+- [x] Nadir computed from parquet timepoints only (not raw RANO)
+- [x] Shape feature cross-sequence consistency check done
+- [x] Correlation heatmaps saved to `notebooks/figures/`
+- [x] Sequence length histogram saved
+- [x] `feature_engineering.yaml` committed
+- [x] EDA plots documented as descriptive-only in notebook markdown
+- [x] No label-dependent operations performed outside CV
+- [x] Temporal autocorrelation analysis saved to `notebooks/figures/`
