@@ -20,8 +20,8 @@ Usage:
     python -m src.preprocessing.dataset_builder
 
 Output:
-    data/processed/dataset_paired.parquet
-    data/processed/dataset_builder_report.json
+    data/processed/preprocessing/dataset_paired.parquet
+    data/processed/preprocessing/dataset_builder_report.json
 """
 
 import json
@@ -55,7 +55,7 @@ from src.utils.lumiere_io import (
 # Configuration
 # ---------------------------------------------------------------------------
 DATA_DIR = Path("data/raw/lumiere")
-OUTPUT_DIR = Path("data/processed")
+OUTPUT_DIR = Path("data/processed/preprocessing")
 
 # Columns to drop from radiomic CSVs before processing
 COLS_TO_DROP: list[str] = ["Reader", "Image", "Mask", "Label"]

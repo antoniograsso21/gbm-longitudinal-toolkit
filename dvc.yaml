@@ -1,28 +1,132 @@
+# dvc.yaml
+# Reproducible pipeline from raw CSVs to final results.
+# Run: dvc repro
+#
+# Stage naming convention mirrors src/ directory structure:
+#   audit/     → lumiere_audit
+#   preprocessing/ → dataset_builder, features_builder
+#   validation/    → dataset_validator, features_validator, graphs_validator
+#   graphs/        → graphs_builder
+#   training/      → baselines_runner, gnn_runner
+#   uncertainty/   → conformal_runner
+#
+# Stages 3–8 are stubs — deps/outs will be populated as each step is implemented.
+
 stages:
-  audit:
+
+  # ---------------------------------------------------------------------------
+  # Step 0 — Audit
+  # ---------------------------------------------------------------------------
+  lumiere_audit:
     cmd: uv run -m src.audit.lumiere_audit
     deps:
       - data/raw/lumiere/
       - src/audit/lumiere_audit.py
       - src/utils/lumiere_io.py
     outs:
-      - data/processed/dataset_stats.json
+      - data/processed/audit/dataset_stats.json
 
-  preprocess:
-    cmd: uv run -m src.preprocessing.build_dataset
+  # ---------------------------------------------------------------------------
+  # Step 1 — Preprocessing
+  # ---------------------------------------------------------------------------
+  dataset_builder:
+    cmd: uv run -m src.preprocessing.dataset_builder
     deps:
       - data/raw/lumiere/
-      - src/preprocessing/build_dataset.py
+      - src/preprocessing/dataset_builder.py
       - src/utils/lumiere_io.py
     outs:
-      - data/processed/dataset_paired.parquet
-      - data/processed/preprocessing_report.json
+      - data/processed/preprocessing/dataset_paired.parquet
+      - data/processed/preprocessing/dataset_builder_report.json
 
-  validate:
-    cmd: uv run -m src.audit.validate_dataset
+  dataset_validator:
+    cmd: uv run -m src.validation.dataset_validator
     deps:
-      - data/processed/dataset_paired.parquet
-      - src/audit/validate_dataset.py
+      - data/processed/preprocessing/dataset_paired.parquet
+      - src/validation/dataset_validator.py
       - src/utils/lumiere_io.py
     outs:
-      - data/processed/validation_report.json
+      - data/processed/validation/dataset_validator_report.json
+
+  # ---------------------------------------------------------------------------
+  # Step 2 — Feature Engineering
+  # ---------------------------------------------------------------------------
+  features_builder:
+    cmd: uv run -m src.preprocessing.features_builder
+    deps:
+      - data/processed/preprocessing/dataset_paired.parquet
+      - src/preprocessing/features_builder.py
+      - src/utils/lumiere_io.py
+      - configs/features_builder.yaml
+    outs:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/preprocessing/features_builder_report.json
+
+  features_validator:
+    cmd: uv run -m src.validation.features_validator
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - src/validation/features_validator.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/validation/features_validator_report.json
+
+  # ---------------------------------------------------------------------------
+  # Step 3 — Baseline Models (stub — populated in Step 3 implementation)
+  # ---------------------------------------------------------------------------
+  baselines_runner:
+    cmd: uv run -m src.training.baselines_runner --config configs/gbm_baseline.yaml
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - src/training/baselines_runner.py
+      - src/utils/lumiere_io.py
+      - configs/gbm_baseline.yaml
+      - configs/logistic_baseline.yaml
+      - configs/lstm_baseline.yaml
+      - configs/feature_selector.yaml
+    outs:
+      - configs/selected_features.yaml
+
+  # ---------------------------------------------------------------------------
+  # Step 4 — Graph Construction + GNN (stub — populated in Step 4 implementation)
+  # ---------------------------------------------------------------------------
+  graphs_builder:
+    cmd: uv run -m src.graphs.graphs_builder
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - configs/selected_features.yaml
+      - src/graphs/graphs_builder.py
+      - src/utils/lumiere_io.py
+      - configs/graph_config.yaml
+    outs:
+      - data/processed/graphs/
+
+  graphs_validator:
+    cmd: uv run -m src.validation.graphs_validator
+    deps:
+      - data/processed/graphs/
+      - src/validation/graphs_validator.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/validation/graphs_validator_report.json
+
+  gnn_runner:
+    cmd: uv run -m src.training.gnn_runner --config configs/gnn.yaml
+    deps:
+      - data/processed/graphs/
+      - data/processed/validation/graphs_validator_report.json
+      - src/training/gnn_runner.py
+      - configs/gnn.yaml
+    outs: []  # MLflow tracks results — no file output at this stage
+
+  # ---------------------------------------------------------------------------
+  # Step 6 — Uncertainty Quantification (stub)
+  # ---------------------------------------------------------------------------
+  conformal_runner:
+    cmd: uv run -m src.uncertainty.conformal_runner --config configs/conformal.yaml
+    deps:
+      - data/processed/graphs/
+      - src/uncertainty/conformal_runner.py
+      - configs/conformal.yaml
+    outs: []  # MLflow tracks results

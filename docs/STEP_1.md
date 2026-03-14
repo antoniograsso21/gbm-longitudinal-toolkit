@@ -15,9 +15,9 @@ uv run -m src.validation.dataset_validator
 ```
 
 **Outputs**:
-- `data/processed/dataset_paired.parquet`
-- `data/processed/dataset_builder_report.json`
-- `data/processed/validation_dataset_builder_report.json`
+- `data/processed/preprocessing/dataset_paired.parquet`
+- `data/processed/preprocessing/dataset_builder_report.json`
+- `data/processed/validation/dataset_validator_report.json`
 
 ---
 
@@ -120,8 +120,8 @@ flags (1):
 
 - [x] `dataset_paired.parquet`: 231 rows, 2576 columns, zero NaN, zero inf
 - [x] `dataset_builder_report.json` saved
-- [x] `validation_dataset_builder_report.json` saved — all 11 assertions PASS, no FAIL
+- [x] `validation/dataset_validator_report.json` saved — all 11 assertions PASS, no FAIL
 - [x] any-NaN strategy: 63 scans dropped, Patient-039 loss documented
 - [x] 514 features log-transformed, 30 excluded
 - [x] scan_index assigned after drop (contiguous)
-- [x] DVC tracking: dataset_stats.json, dataset_paired.parquet, validation_dataset_builder_report.json
+- [x] DVC tracking: audit/dataset_stats.json, preprocessing/dataset_paired.parquet, validation/dataset_validator_report.json

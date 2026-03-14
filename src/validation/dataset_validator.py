@@ -45,8 +45,9 @@ from src.utils.lumiere_io import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-OUTPUT_DIR = Path("data/processed")
-PARQUET_PATH = OUTPUT_DIR / "dataset_paired.parquet"
+PREPROCESSING_DIR = Path("data/processed/preprocessing")
+OUTPUT_DIR = Path("data/processed/validation")
+PARQUET_PATH = PREPROCESSING_DIR / "dataset_paired.parquet"
 REPORT_PATH = OUTPUT_DIR / "dataset_validator_report.json"
 
 EXPECTED_N_EFFECTIVE = 231
@@ -207,6 +208,7 @@ def check_survival_bias(df: pd.DataFrame) -> tuple[str, dict]:
 # ---------------------------------------------------------------------------
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PREPROCESSING_DIR.mkdir(parents=True, exist_ok=True)
     print_section("LUMIERE Dataset Validation — Step 1")
 
     if not PARQUET_PATH.exists():

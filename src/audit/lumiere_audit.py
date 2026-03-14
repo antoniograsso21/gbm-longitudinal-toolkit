@@ -1,6 +1,6 @@
 """
-LUMIERE Dataset Audit — Phase 0
-================================
+LUMIERE Dataset Audit — Step 0
+===============================
 Explores the LUMIERE CSVs following the EDA Guidelines in CONTEXT.md.
 
 FUNDAMENTAL RULE: the unit of analysis is always the PATIENT, not the scan.
@@ -38,7 +38,7 @@ from src.utils.lumiere_io import (
 # Configuration
 # ---------------------------------------------------------------------------
 DATA_DIR = Path("data/raw/lumiere")
-OUTPUT_DIR = Path("data/processed")
+OUTPUT_DIR = Path("data/processed/audit")
 
 # Columns to drop in preprocessing — confirmed 100% NaN in audit
 # Reader: populated in some PyRadiomics versions but empty in LUMIERE (all "N-A")

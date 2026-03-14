@@ -266,8 +266,15 @@ delta_CE_NC_ratio, delta_CE_vs_nadir                       — delta derived
 ```
 gbm-longitudinal-toolkit/
 ├── .github/workflows/ci.yml
-├── data/raw/lumiere/           # original CSVs — never modified, DVC tracked
-├── data/processed/             # pipeline output — DVC versioned
+├── data/
+│   ├── raw/lumiere/            # original CSVs — never modified, DVC tracked
+│   └── processed/
+│       ├── audit/              # dataset_stats.json
+│       ├── preprocessing/      # dataset_paired.parquet, dataset_engineered.parquet
+│       │                       # dataset_builder_report.json, features_builder_report.json
+│       ├── validation/         # dataset_validator_report.json, features_validator_report.json
+│       │                       # graphs_validator_report.json
+│       └── graphs/             # {patient_id}.pt (Step 4)
 ├── src/
 │   ├── utils/                  # lumiere_io.py — shared pure functions
 │   ├── audit/                  # lumiere_audit.py

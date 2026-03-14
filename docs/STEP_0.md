@@ -8,7 +8,7 @@ of the raw data state before any manipulation.
 
 **Scripts**: `src/audit/lumiere_audit.py`
 **Run**: `uv run -m src.audit.lumiere_audit`
-**Output**: `data/processed/dataset_stats.json`
+**Output**: `data/processed/audit/dataset_stats.json`
 
 ---
 
@@ -96,11 +96,11 @@ This figure is mandatory for the paper Methods section.
 ## Definition of Done ✅
 
 - [x] `lumiere_audit.py` committed and passing
-- [x] `dataset_stats.json` saved (HD-GLIO-AUTO + DeepBraTumIA stats)
+- [x] `audit/dataset_stats.json` saved (HD-GLIO-AUTO + DeepBraTumIA stats)
 - [x] DeepBraTumIA chosen as primary source (91 patients, 529 usable scans)
 - [x] Patient anomalies documented with paper-ready exclusion criteria
 - [x] Follow-up interval distribution measured per class (temporal bias check)
 - [x] n_effective transition (212 audit → 231 preprocessed) documented
 - [x] Sequence-level completeness referenced via datacompleteness.csv
-- [x] Temporal monotonicity verified in Step 1 validate_dataset.py (assertion 11)
+- [x] Temporal monotonicity verified in Step 1 dataset_validator.py (assertion 11)
 - [x] Scan count distribution per patient documented in Step 1 survival bias check

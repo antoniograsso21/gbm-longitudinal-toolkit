@@ -33,8 +33,8 @@ Usage:
     uv run -m src.preprocessing.features_builder
 
 Output:
-    data/processed/dataset_engineered.parquet
-    data/processed/features_builder_report.json
+    data/processed/preprocessing/dataset_engineered.parquet
+    data/processed/preprocessing/features_builder_report.json
 """
 
 from __future__ import annotations
@@ -51,10 +51,10 @@ from src.utils.lumiere_io import SECTION, print_section
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-DATA_DIR = Path("data/processed")
+DATA_DIR = Path("data/processed/preprocessing")
 INPUT_PARQUET = DATA_DIR / "dataset_paired.parquet"
-OUTPUT_PARQUET = DATA_DIR / "dataset_engineered.parquet"
-REPORT_PATH = DATA_DIR / "features_builder_report.json"
+OUTPUT_PARQUET = Path("data/processed/preprocessing") / "dataset_engineered.parquet"
+REPORT_PATH = Path("data/processed/preprocessing") / "features_builder_report.json"
 
 # ---------------------------------------------------------------------------
 # Volume column names — must match pivot output from dataset_builder.py
@@ -225,7 +225,7 @@ def validate_derived_features(df: pd.DataFrame) -> None:
     Catches computation errors immediately (fail fast).
 
     For artifact-level validation runnable independently on the saved
-    parquet, see src/audit/features_validator.py.
+    parquet, see src/validation/features_validator.py.
 
     Checks:
         1. No NaN in any derived column

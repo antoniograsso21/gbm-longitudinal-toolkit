@@ -8,11 +8,11 @@ Two things happen here, in strict order:
 2. **Exploratory analysis** — visualise the feature space to inform model design.
    Purely descriptive. Does NOT guide feature selection (that lives inside CV in Step 3).
 
-**Input**: `data/processed/dataset_paired.parquet`
+**Input**: `data/processed/preprocessing/dataset_paired.parquet`
 **Outputs**:
-- `data/processed/dataset_engineered.parquet` — adds 9 derived features
-- `data/processed/features_builder_report.json`
-- `data/processed/features_validator_report.json`
+- `data/processed/preprocessing/dataset_engineered.parquet` — adds 9 derived features
+- `data/processed/preprocessing/features_builder_report.json`
+- `data/processed/validation/features_validator_report.json`
 - `notebooks/features_eda.ipynb`
 - `configs/features_builder.yaml`
 
@@ -133,7 +133,7 @@ delta_CE_NC_ratio, delta_CE_vs_nadir
 
 **File**: `src/preprocessing/features_builder.py`
 **Run**: `uv run -m src.preprocessing.features_builder`
-**Output**: `data/processed/dataset_engineered.parquet`
+**Output**: `data/processed/preprocessing/dataset_engineered.parquet`
 
 ---
 
@@ -251,7 +251,7 @@ Interpret:
 ## Outputs
 
 ```
-data/processed/dataset_engineered.parquet
+data/processed/preprocessing/dataset_engineered.parquet
 notebooks/features_eda.ipynb
 configs/features_builder.yaml:
     epsilon: 1.0

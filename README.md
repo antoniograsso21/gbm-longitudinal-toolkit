@@ -89,7 +89,12 @@ The high-level design and scientific assumptions are captured in `CONTEXT.md`.
 gbm-longitudinal-toolkit/
 ├── data/
 │   ├── raw/lumiere/           # original CSVs — never modified, DVC-tracked
-│   └── processed/             # audit, parquet, validation reports
+│   └── processed/
+│       ├── audit/             # dataset_stats.json
+│       ├── preprocessing/     # dataset_paired.parquet, dataset_engineered.parquet
+│       │                      # dataset_builder_report.json, features_builder_report.json
+│       ├── validation/        # *_validator_report.json
+│       └── graphs/            # {patient_id}.pt (Step 4)
 ├── src/
 │   ├── utils/                 # LUMIERE-specific I/O and parsing (lumiere_io.py)
 │   ├── audit/                 # lumiere_audit.py
@@ -150,10 +155,10 @@ implemented and passing validation.
    ```
 
    This produces:
-   - `data/processed/dataset_stats.json`
-   - `data/processed/dataset_paired.parquet`
-   - `data/processed/dataset_builder_report.json`
-   - `data/processed/dataset_validator_report.json`
+   - `data/processed/audit/dataset_stats.json`
+   - `data/processed/preprocessing/dataset_paired.parquet`
+   - `data/processed/preprocessing/dataset_builder_report.json`
+   - `data/processed/validation/dataset_validator_report.json`
 
 3. **Run feature engineering**
 
@@ -163,9 +168,9 @@ implemented and passing validation.
    ```
 
    This produces:
-   - `data/processed/dataset_engineered.parquet` (231×2585, +9 derived features)
-   - `data/processed/features_builder_report.json`
-   - `data/processed/features_validator_report.json`
+   - `data/processed/preprocessing/dataset_engineered.parquet` (231×2585, +9 derived features)
+   - `data/processed/preprocessing/features_builder_report.json`
+   - `data/processed/validation/features_validator_report.json`
 
 4. **Explore the design**
    - Read `CONTEXT.md` for the scientific rationale.
