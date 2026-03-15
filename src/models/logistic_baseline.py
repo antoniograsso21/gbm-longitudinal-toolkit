@@ -77,7 +77,11 @@ def select_radiomic_features(
     Raises:
         ValueError: if the resulting list is empty.
     """
-    temporal = {"interval_weeks", "scan_index", "time_from_diagnosis_weeks"}
+    temporal = {
+        "interval_weeks", "scan_index", "time_from_diagnosis_weeks",
+        "CE_vs_nadir", "weeks_since_nadir",  # nadir features require patient history
+        # — not cross-sectional, excluded from LR static baseline
+    }
     radiomic_selected = [
         f for f in selected_features
         if f in df.columns

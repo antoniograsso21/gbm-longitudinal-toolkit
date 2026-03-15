@@ -185,9 +185,17 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
   Monitor fold_k_n_selected in MLflow after the run. If variance is extreme (e.g. 1 vs 30),
   lower tau to 0.6 and rerun. Document the chosen tau in the paper Methods section.
 
+**Pre-filtering (variance threshold)**:
+- Near-constant features (variance < 1e-6 on normalised train fold) are removed
+  before mRMR. Label-free — uses only X, no target information, safe inside CV.
+  Reduces MI call count and improves stability of Kraskov estimator on small n.
+
 **Execution scope**:
 - mRMR + Stability Selection on **Full set (D)** in all models (LR, LightGBM, LSTM)
-- LR uses the radiomic-only subset of the fold's selected features (no delta_*, no temporal)
+- LR uses the radiomic-only subset of the fold's selected features
+  Excluded from LR: delta_*, interval_weeks, scan_index, time_from_diagnosis_weeks,
+  CE_vs_nadir, weeks_since_nadir — nadir features require patient history and are
+  not cross-sectional. LR must be a pure static baseline to test Assumption A3.
 - Ablation B (temporal only, 3 features) skips mRMR — no selection needed.
   Guard in `_run_ablation_cv`: mRMR is called only if `ablation != 'B'`.
   If multiple ablations are run together (default), mRMR runs once per fold
@@ -251,7 +259,9 @@ Same hyperparameter grid applied to A/C/D for comparability. B uses default para
 
 **Decision rules (log result and flag in paper if triggered):**
 - If macro F1(B) ≈ macro F1(C): weak radiomic signal → declare in paper
-- If macro F1(B) > 0.33: temporal leakage confirmed → declare in paper
+- If macro F1(B) > 0.38: temporal leakage confirmed → declare in paper
+  (0.38 chosen as conservative threshold above trivial macro_F1≈0.29
+  for a 76/11/13 class distribution; 0.33 would be correct only for balanced classes)
 
 **SHAP** (mandatory, run on best-fold model for ablation D):
 - Beeswarm plot + top-20 features by mean |SHAP|, grouped by compartment (CE/ED/NC) and type (radiomic/temporal/delta)

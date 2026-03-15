@@ -12,7 +12,8 @@ Rationale: Full set D, most stable on small n, SHAP validates selection.
 
 Decision rules evaluated and logged after all ablations complete:
     If macro_F1(B) ≈ macro_F1(C): weak radiomic signal → flag in paper
-    If macro_F1(B) > 0.33:        temporal leakage → flag in paper
+    If macro_F1(B) > 0.38:        temporal leakage → flag in paper
+    (0.38 > trivial macro_F1≈0.29 on 76/11/13 class distribution)
     If interval_weeks SHAP rank ≤ 5: temporal leakage → flag in paper
 
 Side effects are confined to main(). All computation lives in
@@ -51,6 +52,7 @@ import yaml
 from src.models.gbm_baseline import (
     AblationType,
     LGBMFoldResult,
+    SHAPResult,
     build_ablation_feature_set,
     compute_shap,
     train_lgbm_fold,
@@ -194,9 +196,9 @@ def _evaluate_decision_rules(
         else f"PRESENT — F1(C)={f1_C:.4f} > F1(B)={f1_B:.4f} (diff={diff_BC:.4f})."
     )
     verdicts["temporal_leakage"] = (
-        f"CONFIRMED — F1(B)={f1_B:.4f} > 0.33. Declare in paper."
-        if f1_B > 0.33
-        else f"NOT CONFIRMED — F1(B)={f1_B:.4f} ≤ 0.33."
+        f"CONFIRMED — F1(B)={f1_B:.4f} > 0.38. Declare in paper."
+        if f1_B > 0.38
+        else f"NOT CONFIRMED — F1(B)={f1_B:.4f} ≤ 0.38."
     )
     return verdicts
 
@@ -257,7 +259,6 @@ def _run_ablation_cv(
                 fold_selection_results.append(selection)
         else:
             # Ablation B: no feature selection needed — use sentinel empty result
-            from src.training.feature_selector import FoldSelectionResult
             selection = FoldSelectionResult(
                 fold=fold_split.fold,
                 selected_features=[],
