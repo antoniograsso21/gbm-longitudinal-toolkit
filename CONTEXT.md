@@ -181,6 +181,12 @@ Step 8 — Paper (bioRxiv preprint)
    - MI estimation: Kraskov estimator (continuous variables, small n)
    - Stability measured both across bootstrap replicates AND across CV folds
    - Features stable across both are the primary biological interpretation basis
+   - All models (LR, LightGBM, LSTM) run feature selection inside their own CV loop
+   - selected_features.yaml produced exclusively by LightGBM ablation D:
+     rationale: Full set D (radiomics + temporal + delta), most stable on small n,
+     SHAP provides independent validation of the mRMR selection.
+     LR uses radiomic-only subset; LSTM uses Full set D subset — neither exports
+     a permanent artefact. selected_features.yaml flows into Step 4 GraphConfig.
 9. Discarded techniques: MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input;
    shift+log1p on bounded features; all-NaN detection (replaced by any-NaN per label block)
 10. UMAP allowed ONLY for exploratory visualization in the paper

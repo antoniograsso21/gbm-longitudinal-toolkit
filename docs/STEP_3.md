@@ -134,9 +134,23 @@ X_test  = scaler.transform(X_test)        # transform only
 
 ## T3.1 — Feature Selection (inside CV, fold-by-fold)
 
-**File**: `src/training/feature_selector.py`
+**File**: `src/training/feature_selector.py` — pure library, **no standalone entry point**.
 
-mRMR + Stability Selection executed on the training fold only.
+`feature_selector.py` exposes pure functions called inside the CV loop of each model.
+There is no `run_feature_selection.py` — running feature selection before the models
+would be data leakage (selection would see the full dataset including test folds).
+
+The mandatory call pattern inside every `run_*.py`:
+```python
+# inside each fold, after normalisation:
+X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=all_feature_cols)
+selection = select_features_fold(X_train=X_train_scaled_df, y_train=y_train, fold=k)
+# each model then uses selection.selected_features (or its radiomic/temporal subset)
+```
+
+`selected_features.yaml` is produced **only** at the end of `run_lgbm_baseline.py`
+(T3.3, ablation D) via `aggregate_fold_selections()`. It is a reporting artefact
+consumed by Step 4 `GraphConfig.node_feature_cols` — it is never read by the baselines.
 
 **Algorithm**: mRMR
 ```
@@ -148,25 +162,30 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
 
 **Stability Selection**:
 - B=100 bootstrap replicates on the training fold
-- Feature stability score (bootstrap) = fraction of replicates in which feature is selected
+- Feature bootstrap stability = fraction of replicates in which feature is selected
 - Keep features with bootstrap stability > τ=0.7
 
-**Cross-fold stability**:
-- Stability score (fold) = fraction of CV folds in which feature passes bootstrap threshold
+**Cross-fold stability** (computed in T3.3 aggregation only):
+- Stability score (fold) = fraction of folds in which feature passes bootstrap threshold
 - Features stable in both dimensions are the primary biological interpretation basis
 
-**Aggregation into selected_features.yaml**:
-- A feature is included if it passes bootstrap stability (τ=0.7) in ≥ 3 out of 5 folds (majority vote)
-- Majority vote is more robust than strict intersection on n=231
+**Aggregation into selected_features.yaml** (T3.3 only):
+- Majority vote: feature included if bootstrap-stable in ≥ 3/5 folds
+- More robust than strict intersection on n=231
+
+**Runtime notes**:
+- Total MI calls: ~625k across 5 folds (50 mRMR steps × 25 avg redundancy × 100 bootstrap × 5 folds).
+  This is the most expensive part of Step 3. Parallelised via joblib on all available cores.
+  Expected runtime: 4–8h on CPU (i7-7700HQ). Run overnight.
+- tau=0.7 with B=100 means a feature must appear in ≥70 replicates to be selected.
+  On small n this can produce 2–11 features per fold. This is expected behaviour, not a bug.
+  Monitor fold_k_n_selected in MLflow after the run. If variance is extreme (e.g. 1 vs 30),
+  lower tau to 0.6 and rerun. Document the chosen tau in the paper Methods section.
 
 **Execution scope**:
-- mRMR + Stability Selection applied to the **Full set (D)** only
-- Ablations A/B/C use their respective feature subsets directly without re-running mRMR
-  (Temporal set B has only 3 features — mRMR is not meaningful)
-
-**Output**:
-- `configs/selected_features.yaml` — versioned, logged to MLflow, consumed by Step 4 `GraphConfig.node_feature_cols`
-- Per-fold `fold_k_selected_features.json` logged as MLflow artifact
+- mRMR + Stability Selection on **Full set (D)** in all models (LR, LightGBM, LSTM)
+- LR uses the radiomic-only subset of the fold's selected features (no delta_*, no temporal)
+- Ablation B (temporal only, 3 features) skips mRMR — no selection needed
 
 ---
 
@@ -335,7 +354,8 @@ Report mean ± std across folds for all metrics.
 ## Definition of Done
 
 - [ ] T3.0: CV splits verified (no patient leakage), metrics.py tested on synthetic data
-- [ ] T3.1: `selected_features.yaml` committed, stability scores logged to MLflow, fold-level JSONs saved
+- [ ] T3.1: `feature_selector.py` verified (pure functions, no standalone entry point)
+- [ ] T3.3: `selected_features.yaml` committed (produced by LightGBM D only), stability scores logged, fold-level JSONs saved
 - [ ] T3.2: LR CV results logged to MLflow, metrics aggregate computed
 - [ ] T3.3: LightGBM ablations A/B/C/D on MLflow; SHAP beeswarm + top-20 table saved; decision rules documented
 - [ ] T3.4: LSTM CV results logged to MLflow; `pack_padded_sequence` tested on variable-length inputs
