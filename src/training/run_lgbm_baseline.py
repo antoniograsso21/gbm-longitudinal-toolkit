@@ -60,7 +60,13 @@ from src.models.gbm_baseline import (
 from src.training.cross_validation import CVSplits, build_cv_splits
 from src.training.feature_selector import (
     AnchoredFoldSelectionResult,
+    BOOTSTRAP_REPLICATES,
+    BOOTSTRAP_REPLICATES_FAST,
     FoldSelectionResult,
+    MRMR_N_SELECT,
+    MRMR_N_SELECT_FAST,
+    STABILITY_THRESHOLD,
+    STABILITY_THRESHOLD_FAST,
     aggregate_fold_selections,
     select_features_fold_anchored,
 )
@@ -377,7 +383,11 @@ def _run_shap(
 def main(fast: bool = False, ablations: list[AblationType] | None = None, verbose: bool = False) -> None:
     print_section("T3.3 — LightGBM Baseline (Ablations A/B/C/D)")
     if fast:
-        print("  ⚠️  FAST MODE — smoke test only, not production.")
+        print(
+            f"  ⚠️  FAST MODE — "
+            f"B={BOOTSTRAP_REPLICATES_FAST} | n_select={MRMR_N_SELECT_FAST} | "
+            f"tau={STABILITY_THRESHOLD_FAST}. Smoke test only, not production."
+        )
 
     if ablations is None:
         ablations = ABLATIONS
@@ -526,7 +536,11 @@ if __name__ == "__main__":
         help="Print top-50 features by bootstrap stability per fold (tau calibration).",
     )
     parser.add_argument("--fast", action="store_true",
-                        help="Smoke test mode. Never use for production.")
+                        help=(
+                            f"Smoke test mode: B={BOOTSTRAP_REPLICATES_FAST}, "
+                            f"n_select={MRMR_N_SELECT_FAST}, tau={STABILITY_THRESHOLD_FAST}. "
+                            "Never use for production."
+                        ))
     parser.add_argument("--ablation", choices=["A", "B", "C", "D"], default=None,
                         help="Run a single ablation only (default: all).")
     args = parser.parse_args()

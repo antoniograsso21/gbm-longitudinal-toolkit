@@ -47,7 +47,16 @@ import yaml
 
 from src.models.logistic_baseline import train_lr_fold
 from src.training.cross_validation import build_cv_splits
-from src.training.feature_selector import AnchoredFoldSelectionResult, select_features_fold_anchored
+from src.training.feature_selector import (
+    AnchoredFoldSelectionResult,
+    BOOTSTRAP_REPLICATES,
+    BOOTSTRAP_REPLICATES_FAST,
+    MRMR_N_SELECT,
+    MRMR_N_SELECT_FAST,
+    STABILITY_THRESHOLD,
+    STABILITY_THRESHOLD_FAST,
+    select_features_fold_anchored,
+)
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import fit_transform_fold, load_random_config
 from src.utils.lumiere_io import build_full_feature_set, print_section
@@ -117,7 +126,11 @@ def _log_aggregated_metrics(agg: AggregatedMetrics) -> None:
 def main(fast: bool = False, verbose: bool = False) -> None:
     print_section("T3.2 — Logistic Regression Baseline")
     if fast:
-        print("  ⚠️  FAST MODE — B=10, n_select=20. Smoke test only, not production.")
+        print(
+            f"  ⚠️  FAST MODE — "
+            f"B={BOOTSTRAP_REPLICATES_FAST} | n_select={MRMR_N_SELECT_FAST} | "
+            f"tau={STABILITY_THRESHOLD_FAST}. Smoke test only, not production."
+        )
 
     seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
     c_grid, inner_cv_splits = _load_lr_config(LR_CONFIG_PATH)
@@ -272,7 +285,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Smoke test mode: B=10 bootstrap replicates, n_select=20. Never use for production.",
+        help=(
+            f"Smoke test mode: B={BOOTSTRAP_REPLICATES_FAST}, "
+            f"n_select={MRMR_N_SELECT_FAST}, tau={STABILITY_THRESHOLD_FAST}. "
+            "Never use for production."
+        ),
     )
     args = parser.parse_args()
     main(fast=args.fast, verbose=args.verbose)
