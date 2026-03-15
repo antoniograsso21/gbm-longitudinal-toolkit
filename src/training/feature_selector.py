@@ -67,6 +67,7 @@ STABILITY_THRESHOLD: float = 0.7
 FOLD_MAJORITY_THRESHOLD: int = 3      # out of 5 folds
 MRMR_N_SELECT: int = 50              # production
 MRMR_N_SELECT_FAST: int = 20         # smoke test only
+STABILITY_THRESHOLD_FAST: float = 0.3  # smoke test only — τ=0.7 requires B>>10 to be meaningful
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +362,8 @@ def select_features_fold(
         fast:     if True, use reduced B=10 and n_select=20 for smoke tests.
                   Never use fast=True for production runs — results are not
                   scientifically valid.
+        n_jobs:   number of parallel jobs for bootstrap replicates.
+                  Forwarded to run_stability_selection. -1 uses all cores.
 
     Returns:
         FoldSelectionResult with selected features, bootstrap stability scores,
@@ -369,9 +372,13 @@ def select_features_fold(
     if fast:
         effective_B = B if B is not None else BOOTSTRAP_REPLICATES_FAST
         effective_n_select = n_select if n_select is not None else MRMR_N_SELECT_FAST
+        # In fast mode τ=0.7 is not meaningful with B=10 — lower to 0.3
+        # (feature must appear in ≥3/10 replicates). Smoke test only.
+        effective_tau = tau if tau != STABILITY_THRESHOLD else STABILITY_THRESHOLD_FAST
     else:
         effective_B = B if B is not None else BOOTSTRAP_REPLICATES
         effective_n_select = n_select if n_select is not None else MRMR_N_SELECT
+        effective_tau = tau
 
     feature_names = list(X_train.columns)
     X_arr = X_train.values.astype(float)
@@ -382,7 +389,7 @@ def select_features_fold(
         feature_names=feature_names,
         n_select=effective_n_select,
         B=effective_B,
-        tau=tau,
+        tau=effective_tau,
         k_mi=k_mi,
         seed=seed,
         n_jobs=n_jobs,

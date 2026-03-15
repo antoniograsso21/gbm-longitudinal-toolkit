@@ -50,12 +50,9 @@ from src.models.logistic_baseline import (
     train_lr_fold,
 )
 from src.training.cross_validation import build_cv_splits, load_random_config
-from src.training.feature_selector import (
-    FoldSelectionResult,
-    select_features_fold,
-)
+from src.training.feature_selector import select_features_fold
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
-from src.utils.lumiere_io import print_section
+from src.utils.lumiere_io import build_full_feature_set, print_section
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -65,24 +62,6 @@ PARQUET_PATH: Path = Path("data/processed/preprocessing/dataset_engineered.parqu
 OUTPUT_DIR: Path = Path("data/processed/baselines")
 RANDOM_STATE_PATH: str = "configs/random_state.yaml"
 MLFLOW_EXPERIMENT: str = "baselines/logistic_regression"
-
-
-# ---------------------------------------------------------------------------
-# Feature set builder
-# ---------------------------------------------------------------------------
-
-def _build_full_feature_set(df: pd.DataFrame) -> list[str]:
-    """
-    Return all feature columns from the parquet (Full set D).
-    Excludes identifiers, target, and flags.
-    """
-    exclude = {
-        "Patient", "Timepoint",
-        "target", "target_encoded",
-        "is_baseline_scan",
-        "is_nadir_scan",   # boolean flag — not a continuous feature, incompatible with Kraskov MI
-    }
-    return [c for c in df.columns if c not in exclude]
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +116,7 @@ def main(fast: bool = False) -> None:
     df = pd.read_parquet(PARQUET_PATH)
     print(f"  Loaded {PARQUET_PATH}: {df.shape[0]} rows, {df.shape[1]} columns")
 
-    all_feature_cols = _build_full_feature_set(df)
+    all_feature_cols = build_full_feature_set(df)
     y = df["target_encoded"].values
     groups = df["Patient"]
 

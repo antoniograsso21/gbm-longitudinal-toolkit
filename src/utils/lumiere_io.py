@@ -231,7 +231,7 @@ def print_section(title: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Validation utilities (shared across src/validation/ scripts —
+# Validation utilities (shared across dataset_validator, features_validator,
 # validate_graphs — DRY: never duplicate these helpers in per-step files)
 # ---------------------------------------------------------------------------
 import json
@@ -375,3 +375,34 @@ def compute_consecutive_pairs(
                 "label_t1": rows.iloc[i + 1]["Rating_grouped"],
             })
     return _pd.DataFrame(records)
+
+def build_full_feature_set(df: "pd.DataFrame") -> list[str]:
+    """
+    Return all ML feature columns from dataset_engineered.parquet (Full set D).
+
+    Excludes identifiers, target columns, and boolean flags that are
+    incompatible with continuous MI estimators (Kraskov k-NN).
+
+    Excluded columns:
+        Patient, Timepoint          — identifiers
+        target, target_encoded      — target
+        is_baseline_scan            — boolean flag
+        is_nadir_scan               — boolean flag (incompatible with Kraskov MI)
+
+    Used by all run_*.py entry points to build the consistent feature pool
+    passed to mRMR + Stability Selection. Centralised here (DRY) to prevent
+    divergence across LR, LightGBM, and LSTM entry points.
+
+    Args:
+        df: dataset_engineered DataFrame loaded from parquet.
+
+    Returns:
+        List of column names for Full set D (2579 columns for LUMIERE v202211).
+    """
+    exclude = {
+        "Patient", "Timepoint",
+        "target", "target_encoded",
+        "is_baseline_scan",
+        "is_nadir_scan",   # boolean flag — incompatible with Kraskov k-NN MI estimator
+    }
+    return [c for c in df.columns if c not in exclude]
