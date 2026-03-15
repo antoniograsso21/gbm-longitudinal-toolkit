@@ -51,7 +51,7 @@ delta_CE_vs_nadir                  — Δ(CE_vs_nadir) / interval_weeks
 
 # Feature columns: 1284 + 1284 + 3 + 4 + 2 + 2 = 2579  (is_nadir_scan excluded from feature sets)
 # Non-feature columns: Patient, Timepoint, target, target_encoded, is_baseline_scan = 5
-# Total columns: 2580 + 5 = 2585
+# Total columns: 2579 + 5 + 1 = 2585  (2579 features + 5 non-feature + is_nadir_scan flag)
 ```
 
 **Feature set definitions for ablations (referenced throughout this step):**
@@ -237,10 +237,10 @@ for `early_stopping_rounds`. This set is not used for metric evaluation.
 
 | Ablation | Feature columns used |
 |---|---|
-| A | Radiomic set (1293 cols) — selected features only |
+| A | Radiomic set (1292 cols) — selected features only |
 | B | Temporal set (3 cols) — no selection needed |
-| C | Radiomic + Temporal (1296 cols) — selected features + temporal |
-| D | Full set: Radiomic + Temporal + Delta — mRMR input pool: 2580 cols → model input: selected features only |
+| C | Radiomic + Temporal (1295 cols) — selected features + temporal |
+| D | Full set: Radiomic + Temporal + Delta — mRMR input pool: 2579 cols → model input: selected features only |
 
 Same hyperparameter grid applied to A/C/D for comparability. B uses default params
 (3 features — search is not meaningful).
