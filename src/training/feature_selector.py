@@ -203,6 +203,14 @@ def run_mrmr(
     selected_indices: list[int] = []
     remaining: set[int] = set(range(n_features))
 
+    # Cache MI(feature_i, feature_j) within this replicate.
+    # The same pair is requested O(n_select) times across greedy steps —
+    # caching avoids redundant Kraskov calls within a single bootstrap replicate.
+    # Cache is local to run_mrmr (not shared across replicates) because each
+    # replicate operates on a different subsample — cross-replicate reuse
+    # would give incorrect MI estimates.
+    mi_cache: dict[tuple[int, int], float] = {}
+
     for _ in range(n_select):
         best_idx: int = -1
         best_score: float = -np.inf
@@ -211,10 +219,15 @@ def run_mrmr(
             if not selected_indices:
                 score = relevance[idx]
             else:
-                redundancy = np.mean([
-                    _compute_mi_feature_feature(X[:, idx], X[:, j], k=k_mi)
-                    for j in selected_indices
-                ])
+                redundancy_vals: list[float] = []
+                for j in selected_indices:
+                    key = (min(idx, j), max(idx, j))
+                    if key not in mi_cache:
+                        mi_cache[key] = _compute_mi_feature_feature(
+                            X[:, idx], X[:, j], k=k_mi
+                        )
+                    redundancy_vals.append(mi_cache[key])
+                redundancy = float(np.mean(redundancy_vals))
                 score = relevance[idx] - redundancy
 
             if score > best_score:
@@ -240,6 +253,7 @@ def run_stability_selection(
     tau: float = STABILITY_THRESHOLD,
     k_mi: int = 3,
     seed: int = 42,
+    n_jobs: int = -1,
 ) -> tuple[list[str], dict[str, float]]:
     """
     Run Stability Selection over B bootstrap replicates of the training data.
@@ -260,6 +274,9 @@ def run_stability_selection(
         tau:           stability threshold (default 0.7).
         k_mi:          k for Kraskov MI estimator (default 3).
         seed:          random seed for bootstrap sampling.
+        n_jobs:        number of parallel jobs for bootstrap replicates.
+                       -1 uses all available cores. Set to 6 on laptops to
+                       reduce thermal load without significant runtime penalty.
 
     Returns:
         Tuple of:
@@ -286,7 +303,7 @@ def run_stability_selection(
             n_select=n_select, k_mi=k_mi,
         )
 
-    results: list[list[str]] = Parallel(n_jobs=-1)(
+    results: list[list[str]] = Parallel(n_jobs=n_jobs)(
         delayed(_run_replicate)(idx)
         for idx in tqdm(replicate_indices, desc=f"  Bootstrap replicates (B={B})", leave=False)
     )
@@ -322,6 +339,7 @@ def select_features_fold(
     k_mi: int = 3,
     seed: int = 42,
     fast: bool = False,
+    n_jobs: int = -1,
 ) -> FoldSelectionResult:
     """
     Run mRMR + Stability Selection on a single training fold.
@@ -367,6 +385,7 @@ def select_features_fold(
         tau=tau,
         k_mi=k_mi,
         seed=seed,
+        n_jobs=n_jobs,
     )
 
     return FoldSelectionResult(

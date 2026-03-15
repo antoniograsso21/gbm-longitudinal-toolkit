@@ -49,7 +49,7 @@ from src.models.logistic_baseline import (
     select_radiomic_features,
     train_lr_fold,
 )
-from src.training.cross_validation import build_cv_splits, load_seed
+from src.training.cross_validation import build_cv_splits, load_random_config
 from src.training.feature_selector import (
     FoldSelectionResult,
     select_features_fold,
@@ -80,6 +80,7 @@ def _build_full_feature_set(df: pd.DataFrame) -> list[str]:
         "Patient", "Timepoint",
         "target", "target_encoded",
         "is_baseline_scan",
+        "is_nadir_scan",   # boolean flag — not a continuous feature, incompatible with Kraskov MI
     }
     return [c for c in df.columns if c not in exclude]
 
@@ -124,7 +125,7 @@ def main(fast: bool = False) -> None:
     if fast:
         print("  ⚠️  FAST MODE — B=10, n_select=20. Smoke test only, not production.")
 
-    seed = load_seed(RANDOM_STATE_PATH)
+    seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- Load data ---
@@ -160,6 +161,7 @@ def main(fast: bool = False) -> None:
 
     with mlflow.start_run(run_name="lr_cv"):
         mlflow.log_param("seed", seed)
+        mlflow.log_param("n_jobs", n_jobs)
         mlflow.log_param("n_splits", cv_splits.n_splits)
         mlflow.log_param("C_grid", str([0.01, 0.1, 1.0, 10.0]))
         mlflow.log_param("class_weight", "balanced")
@@ -188,6 +190,7 @@ def main(fast: bool = False) -> None:
                 fold=fold_split.fold,
                 seed=seed,
                 fast=fast,
+                n_jobs=n_jobs,
             )
 
             # 3 — restrict to radiomic-only for LR

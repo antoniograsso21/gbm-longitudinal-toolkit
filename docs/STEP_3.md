@@ -5,7 +5,7 @@ Establish rigorous performance baselines and run feature selection inside CV.
 These results are the scientific benchmark against which the GNN in Step 4 is evaluated.
 
 **Input**: `data/processed/dataset_engineered.parquet`
-**Output**: MLflow experiment `baselines/` + `configs/selected_features.yaml`
+**Output**: MLflow experiment `baselines/` + `configs/selected_features.yaml` (produced by LightGBM D, T3.3)
 
 ---
 
@@ -49,15 +49,17 @@ is_nadir_scan                      — True when CE(T) == min(CE[T0..T])
 delta_CE_NC_ratio                  — Δ(CE_NC_ratio) / interval_weeks
 delta_CE_vs_nadir                  — Δ(CE_vs_nadir) / interval_weeks
 
-# Total feature columns: 1284 + 1284 + 3 + 4 + 3 + 2 = 2580
-# Total columns including identifiers, target, flags: 2585
+# Feature columns: 1284 + 1284 + 3 + 4 + 2 + 2 = 2579  (is_nadir_scan excluded from feature sets)
+# Non-feature columns: Patient, Timepoint, target, target_encoded, is_baseline_scan = 5
+# Total columns: 2580 + 5 = 2585
 ```
 
 **Feature set definitions for ablations (referenced throughout this step):**
-- **Radiomic set**: all 1284 `{NC|CE|ED}_*` columns + 4 cross-compartment + 3 nadir-based + 2 delta-derived = 1293 columns
+- **Radiomic set**: all 1284 `{NC|CE|ED}_*` columns + 4 cross-compartment + 2 nadir-based (CE_vs_nadir, weeks_since_nadir) + 2 delta-derived = 1292 columns
+  Note: `is_nadir_scan` is a boolean flag — excluded from all feature sets passed to mRMR (Kraskov k-NN requires continuous input).
 - **Temporal set**: `interval_weeks`, `scan_index`, `time_from_diagnosis_weeks` (3 columns)
 - **Delta set**: all 1284 `delta_{NC|CE|ED}_*` columns (excludes delta_CE_NC_ratio and delta_CE_vs_nadir, which are in Radiomic set)
-- **Full set (D)**: Radiomic + Temporal + Delta = 2580 columns
+- **Full set (D)**: Radiomic + Temporal + Delta = 2579 columns (is_nadir_scan excluded — boolean flag)
 
 ---
 
@@ -95,8 +97,8 @@ T3.4  Baseline 3: LSTM
 T3.5  MLflow consolidation + validator
 ```
 
-Each task depends on the previous. T3.0 and T3.1 are the foundation —
-do not start model training until both are verified.
+Each task depends on the previous. T3.0 is the execution foundation.
+T3.1 is a pure library — it has no standalone run, it is called inside every model's CV loop.
 
 ---
 
@@ -175,8 +177,9 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
 
 **Runtime notes**:
 - Total MI calls: ~625k across 5 folds (50 mRMR steps × 25 avg redundancy × 100 bootstrap × 5 folds).
-  This is the most expensive part of Step 3. Parallelised via joblib on all available cores.
-  Expected runtime: 4–8h on CPU (i7-7700HQ). Run overnight.
+  This is the most expensive part of Step 3. Parallelised via joblib (n_jobs from configs/random_state.yaml).
+  Expected runtime: 3–6h on CPU (i7-7700HQ) with joblib + MI cache. Run overnight.
+  On laptops set n_jobs=6 in random_state.yaml to reduce thermal load (~2 thread headroom for OS).
 - tau=0.7 with B=100 means a feature must appear in ≥70 replicates to be selected.
   On small n this can produce 2–11 features per fold. This is expected behaviour, not a bug.
   Monitor fold_k_n_selected in MLflow after the run. If variance is extreme (e.g. 1 vs 30),
@@ -237,7 +240,7 @@ for `early_stopping_rounds`. This set is not used for metric evaluation.
 | A | Radiomic set (1293 cols) — selected features only |
 | B | Temporal set (3 cols) — no selection needed |
 | C | Radiomic + Temporal (1296 cols) — selected features + temporal |
-| D | Full set: Radiomic + Temporal + Delta (2580 cols) — selected features |
+| D | Full set: Radiomic + Temporal + Delta — mRMR input pool: 2580 cols → model input: selected features only |
 
 Same hyperparameter grid applied to A/C/D for comparability. B uses default params
 (3 features — search is not meaningful).
@@ -265,7 +268,7 @@ given mean sequence length ~3.6 timepoints — this is an honest scientific resu
 last timepoint excluded per the paired examples schema). Variable-length sequences
 handled via `pack_padded_sequence`.
 
-Input shape: `(batch, seq_len, n_features)` where n_features = selected features from T3.1.
+Input shape: `(batch, seq_len, n_features)` where n_features = features selected inside the LSTM CV loop (Full set D, same mRMR + Stability Selection pattern as LightGBM).
 
 **Architecture (fixed)**:
 ```
@@ -355,9 +358,9 @@ Report mean ± std across folds for all metrics.
 
 - [ ] T3.0: CV splits verified (no patient leakage), metrics.py tested on synthetic data
 - [ ] T3.1: `feature_selector.py` verified (pure functions, no standalone entry point)
-- [ ] T3.3: `selected_features.yaml` committed (produced by LightGBM D only), stability scores logged, fold-level JSONs saved
 - [ ] T3.2: LR CV results logged to MLflow, metrics aggregate computed
 - [ ] T3.3: LightGBM ablations A/B/C/D on MLflow; SHAP beeswarm + top-20 table saved; decision rules documented
+- [ ] T3.3: `selected_features.yaml` committed (produced by LightGBM D only), stability scores logged, fold-level JSONs saved
 - [ ] T3.4: LSTM CV results logged to MLflow; `pack_padded_sequence` tested on variable-length inputs
 - [ ] T3.5: validator exits 0; comparison table fully populated
 - [ ] Normalization verified: scaler fit only on train fold (never on full dataset)

@@ -1,1 +1,7 @@
 seed: 42
+
+# Number of parallel jobs for bootstrap replicates in feature selection.
+# -1 uses all available cores (maximum throughput).
+# Set to 6 on laptops (e.g. i7-7700HQ) to reduce thermal load
+# without significant runtime penalty (~2 thread headroom for OS).
+n_jobs: 6
