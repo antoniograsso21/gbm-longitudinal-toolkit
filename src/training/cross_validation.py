@@ -15,7 +15,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import yaml
 from sklearn.model_selection import StratifiedGroupKFold
 
 
@@ -37,53 +36,6 @@ class CVSplits:
     n_splits: int
     folds: list[FoldSplit]
 
-
-# ---------------------------------------------------------------------------
-# Seed loader
-# ---------------------------------------------------------------------------
-
-def load_seed(config_path: str = "configs/random_state.yaml") -> int:
-    """
-    Load the global random seed from YAML.
-
-    Args:
-        config_path: path to random_state.yaml.
-
-    Returns:
-        Integer seed value.
-
-    Raises:
-        KeyError: if 'seed' key is missing from the YAML.
-        FileNotFoundError: if config_path does not exist.
-    """
-    seed, _ = load_random_config(config_path)
-    return seed
-
-
-def load_random_config(config_path: str = "configs/random_state.yaml") -> tuple[int, int]:
-    """
-    Load seed and n_jobs from random_state.yaml.
-
-    Args:
-        config_path: path to random_state.yaml.
-
-    Returns:
-        Tuple (seed, n_jobs).
-
-    Raises:
-        KeyError: if 'seed' key is missing from the YAML.
-        FileNotFoundError: if config_path does not exist.
-    """
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-    if "seed" not in cfg:
-        raise KeyError(
-            f"'seed' key not found in {config_path}. "
-            "Expected format: 'seed: 42'"
-        )
-    seed = int(cfg["seed"])
-    n_jobs = int(cfg.get("n_jobs", -1))
-    return seed, n_jobs
 
 
 # ---------------------------------------------------------------------------

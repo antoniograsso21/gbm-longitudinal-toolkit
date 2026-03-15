@@ -476,3 +476,51 @@ def split_train_val(
     sss = _SSS(n_splits=1, test_size=val_fraction, random_state=seed)
     tr_idx, val_idx = next(sss.split(X, y))
     return X[tr_idx], y[tr_idx], X[val_idx], y[val_idx]
+
+
+def load_seed(config_path: str = "configs/random_state.yaml") -> int:
+    """
+    Load the global random seed from random_state.yaml.
+
+    Convenience wrapper around load_random_config.
+
+    Args:
+        config_path: path to random_state.yaml.
+
+    Returns:
+        Integer seed value.
+
+    Raises:
+        KeyError: if 'seed' key is missing.
+        FileNotFoundError: if config_path does not exist.
+    """
+    seed, _ = load_random_config(config_path)
+    return seed
+
+
+def load_random_config(config_path: str = "configs/random_state.yaml") -> "tuple[int, int]":
+    """
+    Load seed and n_jobs from random_state.yaml.
+
+    Centralised here (DRY) — used by all run_*.py entry points.
+
+    Args:
+        config_path: path to random_state.yaml.
+
+    Returns:
+        Tuple (seed, n_jobs).
+        n_jobs defaults to -1 if not present in the YAML.
+
+    Raises:
+        KeyError: if 'seed' key is missing.
+        FileNotFoundError: if config_path does not exist.
+    """
+    import yaml as _yaml
+    with open(config_path) as f:
+        cfg = _yaml.safe_load(f)
+    if "seed" not in cfg:
+        raise KeyError(
+            f"'seed' key not found in {config_path}. "
+            "Expected format: 'seed: 42'"
+        )
+    return int(cfg["seed"]), int(cfg.get("n_jobs", -1))

@@ -55,7 +55,7 @@ from src.models.gbm_baseline import (
     compute_shap,
     train_lgbm_fold,
 )
-from src.training.cross_validation import CVSplits, build_cv_splits, load_random_config
+from src.training.cross_validation import CVSplits, build_cv_splits
 from src.training.feature_selector import (
     FoldSelectionResult,
     aggregate_fold_selections,
@@ -65,6 +65,7 @@ from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_re
 from src.utils.lumiere_io import (
     build_full_feature_set,
     fit_transform_fold,
+    load_random_config,
     print_section,
     split_train_val,
 )

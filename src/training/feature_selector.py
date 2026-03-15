@@ -66,7 +66,7 @@ BOOTSTRAP_REPLICATES_FAST: int = 10   # smoke test only
 STABILITY_THRESHOLD: float = 0.7
 FOLD_MAJORITY_THRESHOLD: int = 3      # out of 5 folds
 MRMR_N_SELECT: int = 50              # production
-MRMR_N_SELECT_FAST: int = 20         # smoke test only
+MRMR_N_SELECT_FAST: int = 50         # smoke test only
 STABILITY_THRESHOLD_FAST: float = 0.3  # smoke test only — τ=0.7 requires B>>10 to be meaningful
 
 
