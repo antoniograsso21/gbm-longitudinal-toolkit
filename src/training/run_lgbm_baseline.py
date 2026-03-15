@@ -59,18 +59,18 @@ from src.models.gbm_baseline import (
 )
 from src.training.cross_validation import CVSplits, build_cv_splits
 from src.training.feature_selector import (
+    AnchoredFoldSelectionResult,
     FoldSelectionResult,
     aggregate_fold_selections,
-    select_features_fold,
+    select_features_fold_anchored,
 )
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
-from src.utils.lumiere_io import (
-    build_full_feature_set,
+from src.training.training_utils import (
     fit_transform_fold,
     load_random_config,
-    print_section,
     split_train_val,
 )
+from src.utils.lumiere_io import build_full_feature_set, print_section
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -217,6 +217,7 @@ def _run_ablation_cv(
     seed: int,
     n_jobs: int,
     fast: bool,
+    verbose: bool = False,
 ) -> tuple[list[LGBMFoldResult], AggregatedMetrics, list[FoldSelectionResult]]:
     """
     Run full CV for a single ablation.
@@ -242,35 +243,47 @@ def _run_ablation_cv(
             X_train_df, X_test_df, all_feature_cols
         )
 
-        # 2 — feature selection on normalised train fold (Full set D)
-        # Skip mRMR if ablation B is the only one requested — B uses
-        # TEMPORAL_COLS directly and does not consume selected features.
+        # 2 — anchored feature selection on normalised train fold
+        # Skip mRMR if ablation B is the only one requested.
         X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=all_feature_cols)
         if ablation != "B":
-            selection = select_features_fold(
+            selection: AnchoredFoldSelectionResult = select_features_fold_anchored(
                 X_train=X_train_scaled_df,
                 y_train=y_train,
                 fold=fold_split.fold,
                 seed=seed,
                 fast=fast,
                 n_jobs=n_jobs,
+                verbose=verbose,
             )
             if ablation == "D":
-                fold_selection_results.append(selection)
+                # Store radiomic-only FoldSelectionResult for YAML aggregation
+                fold_selection_results.append(FoldSelectionResult(
+                    fold=fold_split.fold,
+                    selected_features=selection.selected_radiomic,
+                    bootstrap_stability=selection.bootstrap_stability,
+                    n_candidates=selection.n_radiomic_candidates,
+                    n_selected=selection.n_radiomic_selected,
+                    fast_mode=selection.fast_mode,
+                ))
         else:
-            # Ablation B: no feature selection needed — use sentinel empty result
-            selection = FoldSelectionResult(
+            # Ablation B: no feature selection needed — sentinel
+            selection = AnchoredFoldSelectionResult(
                 fold=fold_split.fold,
-                selected_features=[],
+                selected_radiomic=[],
+                anchored_delta=[],
+                temporal_cols=[],
+                full_feature_set=[],
                 bootstrap_stability={},
-                n_candidates=0,
-                n_selected=0,
+                n_radiomic_candidates=0,
+                n_radiomic_selected=0,
+                n_delta_anchored=0,
                 fast_mode=fast,
             )
 
-        # 3 — build ablation-specific feature set
+        # 3 — build ablation-specific feature set from anchored selection
         feature_cols = build_ablation_feature_set(
-            selected_features=selection.selected_features,
+            selection=selection,
             ablation=ablation,
         )
 
@@ -361,7 +374,7 @@ def _run_shap(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(fast: bool = False, ablations: list[AblationType] | None = None) -> None:
+def main(fast: bool = False, ablations: list[AblationType] | None = None, verbose: bool = False) -> None:
     print_section("T3.3 — LightGBM Baseline (Ablations A/B/C/D)")
     if fast:
         print("  ⚠️  FAST MODE — smoke test only, not production.")
@@ -422,6 +435,7 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None) -> Non
                 seed=seed,
                 n_jobs=n_jobs,
                 fast=fast,
+                verbose=verbose,
             )
 
             all_fold_results[ablation] = fold_results
@@ -506,9 +520,14 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None) -> Non
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LightGBM baseline (T3.3)")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print top-50 features by bootstrap stability per fold (tau calibration).",
+    )
     parser.add_argument("--fast", action="store_true",
                         help="Smoke test mode. Never use for production.")
     parser.add_argument("--ablation", choices=["A", "B", "C", "D"], default=None,
                         help="Run a single ablation only (default: all).")
     args = parser.parse_args()
-    main(fast=args.fast, ablations=[args.ablation] if args.ablation else None)
+    main(fast=args.fast, ablations=[args.ablation] if args.ablation else None, verbose=args.verbose)

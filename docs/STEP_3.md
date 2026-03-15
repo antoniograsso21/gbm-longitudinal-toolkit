@@ -146,13 +146,15 @@ The mandatory call pattern inside every `run_*.py`:
 ```python
 # inside each fold, after normalisation:
 X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=all_feature_cols)
-selection = select_features_fold(X_train=X_train_scaled_df, y_train=y_train, fold=k)
-# each model then uses selection.selected_features (or its radiomic/temporal subset)
+selection = select_features_fold_anchored(X_train=X_train_scaled_df, y_train=y_train, fold=k)
+# LR uses: selection.selected_radiomic
+# LightGBM/LSTM/GNN use: selection.full_feature_set
 ```
 
 `selected_features.yaml` is produced **only** at the end of `run_lgbm_baseline.py`
-(T3.3, ablation D) via `aggregate_fold_selections()`. It is a reporting artefact
-consumed by Step 4 `GraphConfig.node_feature_cols` — it is never read by the baselines.
+(T3.3, ablation D) via `aggregate_fold_selections()`. It contains the **radiomic-only**
+selected features (majority vote across folds) — consumed by Step 4
+`GraphConfig.node_feature_cols`. Never read by the baselines.
 
 **Algorithm**: mRMR
 ```
@@ -180,26 +182,39 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
   This is the most expensive part of Step 3. Parallelised via joblib (n_jobs from configs/random_state.yaml).
   Expected runtime: 3–6h on CPU (i7-7700HQ) with joblib + MI cache. Run overnight.
   On laptops set n_jobs=6 in random_state.yaml to reduce thermal load (~2 thread headroom for OS).
-- tau=0.7 with B=100 means a feature must appear in ≥70 replicates to be selected.
-  On small n this can produce 2–11 features per fold. This is expected behaviour, not a bug.
-  Monitor fold_k_n_selected in MLflow after the run. If variance is extreme (e.g. 1 vs 30),
-  lower tau to 0.6 and rerun. Document the chosen tau in the paper Methods section.
+- tau is calibrated empirically on this dataset (n≈185 per fold, radiomic-only pool).
+  Production default: tau=0.6. Start at 0.6; if fold 0 gives 0 features lower to 0.5.
+  tau=0.7 (Meinshausen & Bühlmann recommendation) requires n>>200 per fold to be stable.
+  Document the chosen tau and calibration rationale in the paper Methods section.
+  Monitor n_radiomic_selected and n_delta_anchored in MLflow after each run.
 
 **Pre-filtering (variance threshold)**:
 - Near-constant features (variance < 1e-6 on normalised train fold) are removed
   before mRMR. Label-free — uses only X, no target information, safe inside CV.
   Reduces MI call count and improves stability of Kraskov estimator on small n.
 
+**Feature selection flow (fold-by-fold, inside CV)**:
+```
+1. Variance threshold on full set (label-free) → remove near-constant features
+2. mRMR + Stability Selection on radiomic-only subset → selected_radiomic
+3. Anchored delta = {delta_f : f in selected_radiomic AND delta_f passes variance}
+4. full_feature_set = selected_radiomic + temporal (3) + anchored_delta
+```
+Biological motivation for anchoring: if a radiomic feature is stable and
+informative, its rate of change is biologically plausible. Including all
+1284 delta features would introduce noise given mean sequence length ~3.6.
+Delta features are NOT passed through mRMR — their bootstrap stability is
+unreliable on sequences of mean length 3.6 timepoints.
+
 **Execution scope**:
-- mRMR + Stability Selection on **Full set (D)** in all models (LR, LightGBM, LSTM)
-- LR uses the radiomic-only subset of the fold's selected features
-  Excluded from LR: delta_*, interval_weeks, scan_index, time_from_diagnosis_weeks,
-  CE_vs_nadir, weeks_since_nadir — nadir features require patient history and are
-  not cross-sectional. LR must be a pure static baseline to test Assumption A3.
-- Ablation B (temporal only, 3 features) skips mRMR — no selection needed.
-  Guard in `_run_ablation_cv`: mRMR is called only if `ablation != 'B'`.
-  If multiple ablations are run together (default), mRMR runs once per fold
-  and its result is shared across A/C/D — B receives a sentinel empty result.
+- mRMR + Stability Selection on **radiomic-only subset** in all models
+- LR uses `selected_radiomic` only — pure cross-sectional static baseline
+  (no delta, no temporal, no nadir features CE_vs_nadir/weeks_since_nadir)
+- LightGBM/LSTM/GNN use `full_feature_set` = selected_radiomic + temporal + anchored_delta
+- Ablation B (temporal only, 3 features) skips mRMR — sentinel result used.
+  Guard in `_run_ablation_cv`: `select_features_fold_anchored` called only if `ablation != 'B'`.
+  When multiple ablations run together, mRMR runs once per fold and result
+  is shared across A/C/D — B receives an empty AnchoredFoldSelectionResult.
 
 ---
 

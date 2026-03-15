@@ -45,14 +45,12 @@ import mlflow
 import pandas as pd
 import yaml
 
-from src.models.logistic_baseline import (
-    select_radiomic_features,
-    train_lr_fold,
-)
+from src.models.logistic_baseline import train_lr_fold
 from src.training.cross_validation import build_cv_splits
-from src.training.feature_selector import select_features_fold
+from src.training.feature_selector import AnchoredFoldSelectionResult, select_features_fold_anchored
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
-from src.utils.lumiere_io import build_full_feature_set, fit_transform_fold, load_random_config, print_section
+from src.training.training_utils import fit_transform_fold, load_random_config
+from src.utils.lumiere_io import build_full_feature_set, print_section
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -116,7 +114,7 @@ def _log_aggregated_metrics(agg: AggregatedMetrics) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(fast: bool = False) -> None:
+def main(fast: bool = False, verbose: bool = False) -> None:
     print_section("T3.2 — Logistic Regression Baseline")
     if fast:
         print("  ⚠️  FAST MODE — B=10, n_select=20. Smoke test only, not production.")
@@ -178,40 +176,36 @@ def main(fast: bool = False) -> None:
                 X_train_df, X_test_df, all_feature_cols
             )
 
-            # 2 — feature selection on normalised train fold (Full set D)
+            # 2 — anchored feature selection on normalised train fold
+            # mRMR on radiomic-only; delta anchored to selected radiomic (label-free)
             X_train_scaled_df = pd.DataFrame(
                 X_train_scaled, columns=all_feature_cols
             )
-            selection = select_features_fold(
+            selection: AnchoredFoldSelectionResult = select_features_fold_anchored(
                 X_train=X_train_scaled_df,
                 y_train=y_train,
                 fold=fold_split.fold,
                 seed=seed,
                 fast=fast,
                 n_jobs=n_jobs,
+                verbose=verbose,
             )
 
-            # 3 — restrict to radiomic-only for LR
-            # LR is cross-sectional: delta_* and temporal excluded by design
-            radiomic_cols = select_radiomic_features(
-                df=X_train_scaled_df,
-                selected_features=selection.selected_features,
-            )
+            # 3 — LR uses radiomic-only (cross-sectional static baseline)
+            radiomic_cols = selection.selected_radiomic
 
             if not radiomic_cols:
                 raise RuntimeError(
-                    f"Fold {fold_split.fold}: no radiomic features remain after "
-                    "mRMR + Stability Selection on Full set D. "
-                    "The selection is too aggressive for this fold — "
-                    "consider lowering tau or increasing n_select."
+                    f"Fold {fold_split.fold}: no radiomic features selected. "
+                    "Consider lowering tau or increasing n_select."
                 )
 
             print(
-                f"  {selection.n_selected} features selected | "
-                f"{len(radiomic_cols)} radiomic for LR"
+                f"  {selection.n_radiomic_selected} radiomic selected | "
+                f"{selection.n_delta_anchored} delta anchored | LR uses {len(radiomic_cols)}"
             )
-            mlflow.log_metric(f"fold_{fold_split.fold}_n_selected",  selection.n_selected)
-            mlflow.log_metric(f"fold_{fold_split.fold}_n_radiomic",  len(radiomic_cols))
+            mlflow.log_metric(f"fold_{fold_split.fold}_n_radiomic", selection.n_radiomic_selected)
+            mlflow.log_metric(f"fold_{fold_split.fold}_n_delta_anchored", selection.n_delta_anchored)
 
             # 4 — select radiomic columns by name, not by position index
             # DataFrame-based indexing is robust to column order changes
@@ -271,9 +265,14 @@ def main(fast: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Logistic Regression baseline (T3.2)")
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print top-50 features by bootstrap stability per fold (tau calibration).",
+    )
+    parser.add_argument(
         "--fast",
         action="store_true",
         help="Smoke test mode: B=10 bootstrap replicates, n_select=20. Never use for production.",
     )
     args = parser.parse_args()
-    main(fast=args.fast)
+    main(fast=args.fast, verbose=args.verbose)

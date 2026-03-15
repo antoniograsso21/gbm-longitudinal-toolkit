@@ -66,7 +66,27 @@ BOOTSTRAP_REPLICATES_FAST: int = 10   # smoke test only
 STABILITY_THRESHOLD: float = 0.7
 FOLD_MAJORITY_THRESHOLD: int = 3      # out of 5 folds
 MRMR_N_SELECT: int = 50              # production
-MRMR_N_SELECT_FAST: int = 50         # smoke test only
+VARIANCE_THRESHOLD: float = 1e-6     # near-constant features filtered before mRMR
+                                     # label-free: computed on X only, safe inside CV fold
+TEMPORAL_COLS: frozenset[str] = frozenset({  # never passed to mRMR
+    "interval_weeks", "scan_index", "time_from_diagnosis_weeks",
+})
+
+# Nadir features require patient history — not cross-sectional.
+# Excluded from the radiomic pool passed to mRMR and from LR.
+# Included in full_feature_set for LightGBM/LSTM/GNN as derived features.
+NADIR_COLS: frozenset[str] = frozenset({
+    "CE_vs_nadir",
+    "weeks_since_nadir",
+})
+
+# Delta of derived features (not delta of raw radiomics)
+# Treated as delta features for anchoring purposes.
+DELTA_DERIVED_COLS: frozenset[str] = frozenset({
+    "delta_CE_NC_ratio",
+    "delta_CE_vs_nadir",
+})
+MRMR_N_SELECT_FAST: int = 20         # smoke test only
 STABILITY_THRESHOLD_FAST: float = 0.3  # smoke test only — τ=0.7 requires B>>10 to be meaningful
 
 
@@ -83,6 +103,33 @@ class FoldSelectionResult:
     n_candidates: int                        # features entering mRMR
     n_selected: int                          # features passing stability threshold
     fast_mode: bool                          # True if run with reduced B/n_select
+
+
+@dataclass
+class AnchoredFoldSelectionResult:
+    """
+    Feature selection result with anchored delta features.
+
+    selected_radiomic:  radiomic features passing mRMR + Stability Selection.
+    anchored_delta:     delta features whose base radiomic was selected
+                        AND passed variance threshold. Computed label-free.
+    temporal_cols:      temporal features (always included, never selected).
+    full_feature_set:   selected_radiomic + temporal_cols + anchored_delta.
+                        Used by LightGBM/LSTM/GNN.
+    bootstrap_stability: stability scores for radiomic features.
+    fold:               fold index.
+    fast_mode:          True if run with reduced B/n_select.
+    """
+    fold: int
+    selected_radiomic: list[str]
+    anchored_delta: list[str]
+    temporal_cols: list[str]
+    full_feature_set: list[str]
+    bootstrap_stability: dict[str, float]
+    n_radiomic_candidates: int
+    n_radiomic_selected: int
+    n_delta_anchored: int
+    fast_mode: bool
 
 
 @dataclass
@@ -380,8 +427,32 @@ def select_features_fold(
         effective_n_select = n_select if n_select is not None else MRMR_N_SELECT
         effective_tau = tau
 
+    # Always print actual parameters used — visible in both fast and production runs
+    mode_label = "FAST" if fast else "PRODUCTION"
+    print(
+        f"  [feature_selector fold={fold} {mode_label}] "
+        f"B={effective_B} | n_select={effective_n_select} | "
+        f"tau={effective_tau} | variance_threshold={VARIANCE_THRESHOLD}"
+    )
+
     feature_names = list(X_train.columns)
     X_arr = X_train.values.astype(float)
+
+    # Variance threshold: remove near-constant features before mRMR.
+    # Label-free — uses only X, no target information.
+    # Computed on the normalised training fold (already scaled by caller).
+    # Near-constant features cannot have meaningful MI with any target.
+    variances = X_arr.var(axis=0)
+    kept_mask = variances > VARIANCE_THRESHOLD
+    n_dropped_variance = int((~kept_mask).sum())
+    if n_dropped_variance > 0:
+        X_arr = X_arr[:, kept_mask]
+        feature_names = [f for f, keep in zip(feature_names, kept_mask) if keep]
+        print(
+            f"  [feature_selector fold={fold}] "
+            f"variance filter: {n_dropped_variance} near-constant features removed, "
+            f"{len(feature_names)} remain"
+        )
 
     stable_features, bootstrap_stability = run_stability_selection(
         X=X_arr,
@@ -401,6 +472,201 @@ def select_features_fold(
         bootstrap_stability=bootstrap_stability,
         n_candidates=len(feature_names),
         n_selected=len(stable_features),
+        fast_mode=fast,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Anchored fold selection (radiomic mRMR + delta anchoring)
+# ---------------------------------------------------------------------------
+
+def select_features_fold_anchored(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    fold: int,
+    n_select: int | None = None,
+    B: int | None = None,
+    tau: float = STABILITY_THRESHOLD,
+    k_mi: int = 3,
+    seed: int = 42,
+    fast: bool = False,
+    n_jobs: int = -1,
+    verbose: bool = False,
+) -> "AnchoredFoldSelectionResult":
+    """
+    Feature selection with anchored delta features. Four-step fold-wise flow:
+
+        1. Variance threshold on full feature set (label-free)
+        2. mRMR + Stability Selection on radiomic-only subset → selected_radiomic
+        3. Anchored delta = delta features whose base radiomic was selected
+           AND passed variance threshold (label-free, no additional MI required)
+        4. full_feature_set = selected_radiomic + temporal (3) + anchored_delta
+
+    Biological motivation for anchoring:
+        If CE_CT1_original_firstorder_10Percentile is stable and informative,
+        its rate of change (delta_CE_CT1_original_firstorder_10Percentile)
+        is biologically plausible. Including all 1284 delta features would
+        introduce excessive noise given mean sequence length ~3.6 timepoints.
+
+    LR uses only selected_radiomic (cross-sectional, static baseline).
+    LightGBM/LSTM/GNN use full_feature_set.
+
+    Args:
+        X_train:  normalised training features (full set D), shape (n_train, n_features).
+        y_train:  integer labels for the training fold, shape (n_train,).
+        fold:     fold index for traceability.
+        n_select: mRMR candidates on radiomic subset. None → MRMR_N_SELECT.
+        B:        bootstrap replicates. None → BOOTSTRAP_REPLICATES.
+        tau:      stability threshold (default STABILITY_THRESHOLD).
+        k_mi:     k for Kraskov MI estimator.
+        seed:     random seed.
+        fast:     smoke test mode — reduced B and tau.
+        n_jobs:   parallel jobs for bootstrap.
+        verbose:  if True, print top-50 radiomic features by bootstrap stability
+                  before applying tau threshold. Useful for tau calibration.
+                  Off by default to avoid log noise in production runs.
+
+    Returns:
+        AnchoredFoldSelectionResult with radiomic selection + anchored delta.
+    """
+    if fast:
+        effective_B = B if B is not None else BOOTSTRAP_REPLICATES_FAST
+        effective_n_select = n_select if n_select is not None else MRMR_N_SELECT_FAST
+        effective_tau = tau if tau != STABILITY_THRESHOLD else STABILITY_THRESHOLD_FAST
+    else:
+        effective_B = B if B is not None else BOOTSTRAP_REPLICATES
+        effective_n_select = n_select if n_select is not None else MRMR_N_SELECT
+        effective_tau = tau
+
+    mode_label = "FAST" if fast else "PRODUCTION"
+    print(
+        f"  [feature_selector fold={fold} {mode_label}] "
+        f"B={effective_B} | n_select={effective_n_select} | "
+        f"tau={effective_tau} | variance_threshold={VARIANCE_THRESHOLD}"
+    )
+
+    all_feature_names = list(X_train.columns)
+    X_full = X_train.values.astype(float)
+
+    # -----------------------------------------------------------------------
+    # Step 1 — Variance threshold on full set (label-free)
+    # -----------------------------------------------------------------------
+    variances = X_full.var(axis=0)
+    kept_mask = variances > VARIANCE_THRESHOLD
+    n_dropped_variance = int((~kept_mask).sum())
+    variance_passed: set[str] = {
+        name for name, keep in zip(all_feature_names, kept_mask) if keep
+    }
+    if n_dropped_variance > 0:
+        print(
+            f"  [feature_selector fold={fold}] "
+            f"variance filter: {n_dropped_variance} near-constant features removed"
+        )
+
+    # -----------------------------------------------------------------------
+    # Step 2 — mRMR + Stability Selection on radiomic-only subset
+    # -----------------------------------------------------------------------
+    # Radiomic pool for mRMR:
+    #   - passes variance threshold
+    #   - not a delta feature (delta_* prefix or delta_derived)
+    #   - not temporal (interval_weeks, scan_index, time_from_diagnosis_weeks)
+    #   - not nadir (CE_vs_nadir, weeks_since_nadir — require patient history,
+    #     excluded from mRMR but included in full_feature_set downstream)
+    radiomic_names = [
+        f for f in all_feature_names
+        if f in variance_passed
+        and not f.startswith("delta_")
+        and f not in TEMPORAL_COLS
+        and f not in NADIR_COLS
+        and f not in DELTA_DERIVED_COLS
+    ]
+    radiomic_indices = [all_feature_names.index(f) for f in radiomic_names]
+    X_radiomic = X_full[:, radiomic_indices]
+
+    stable_radiomic, bootstrap_stability = run_stability_selection(
+        X=X_radiomic,
+        y=y_train,
+        feature_names=radiomic_names,
+        n_select=min(effective_n_select, len(radiomic_names)),
+        B=effective_B,
+        tau=effective_tau,
+        k_mi=k_mi,
+        seed=seed,
+        n_jobs=n_jobs,
+    )
+
+    if verbose:
+        # Print top-50 radiomic features by bootstrap stability score
+        # Useful for calibrating tau — shows what is just below the threshold
+        top_n = 50
+        sorted_stability = sorted(
+            bootstrap_stability.items(), key=lambda x: x[1], reverse=True
+        )[:top_n]
+        print(f"\n  [feature_selector fold={fold}] Top-{top_n} radiomic by bootstrap stability:")
+        for rank, (fname, score) in enumerate(sorted_stability, 1):
+            marker = "✅" if score >= effective_tau else "  "
+            print(f"    {marker} {rank:3d}. {fname:65s} : {score:.2f}")
+        n_above = sum(1 for _, s in sorted_stability if s >= effective_tau)
+        n_below_shown = len(sorted_stability) - n_above
+        print(
+            f"  [feature_selector fold={fold}] "
+            f"{n_above} above tau={effective_tau:.2f} in top-{top_n} | "
+            f"{n_below_shown} shown below threshold\n"
+        )
+
+    print(
+        f"  [feature_selector fold={fold}] "
+        f"radiomic: {len(radiomic_names)} candidates → {len(stable_radiomic)} selected"
+    )
+
+    # -----------------------------------------------------------------------
+    # Step 3 — Anchor delta features to selected radiomic
+    # -----------------------------------------------------------------------
+    # A delta feature delta_X is anchored if:
+    #   - its base feature X was selected by mRMR (stable radiomic signal)
+    #   - delta_X itself passed variance threshold (not near-constant)
+    anchored_delta: list[str] = []
+    for radiomic_feat in stable_radiomic:
+        delta_name = f"delta_{radiomic_feat}"
+        if delta_name in variance_passed:
+            anchored_delta.append(delta_name)
+
+    print(
+        f"  [feature_selector fold={fold}] "
+        f"anchored delta: {len(anchored_delta)} (from {len(stable_radiomic)} selected radiomic)"
+    )
+
+    # -----------------------------------------------------------------------
+    # Step 4 — Build full feature set
+    # -----------------------------------------------------------------------
+    temporal = [c for c in all_feature_names if c in TEMPORAL_COLS]
+    # Nadir features: included for LightGBM/LSTM/GNN (not LR)
+    # Only include those that passed variance threshold
+    nadir = [c for c in all_feature_names if c in NADIR_COLS and c in variance_passed]
+    # Delta of derived features: treated as anchored delta (no mRMR needed —
+    # their base features CE_NC_ratio and CE_vs_nadir are not in radiomic pool)
+    delta_derived = [
+        c for c in all_feature_names
+        if c in DELTA_DERIVED_COLS and c in variance_passed
+    ]
+    full_feature_set = stable_radiomic + temporal + nadir + anchored_delta + delta_derived
+
+    print(
+        f"  [feature_selector fold={fold}] "
+        f"nadir: {len(nadir)} | delta_derived: {len(delta_derived)} | "
+        f"total full_feature_set: {len(full_feature_set)}"
+    )
+
+    return AnchoredFoldSelectionResult(
+        fold=fold,
+        selected_radiomic=stable_radiomic,
+        anchored_delta=anchored_delta,
+        temporal_cols=temporal,
+        full_feature_set=full_feature_set,
+        bootstrap_stability=bootstrap_stability,
+        n_radiomic_candidates=len(radiomic_names),
+        n_radiomic_selected=len(stable_radiomic),
+        n_delta_anchored=len(anchored_delta),
         fast_mode=fast,
     )
 

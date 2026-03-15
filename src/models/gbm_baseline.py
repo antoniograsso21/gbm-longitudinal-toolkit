@@ -33,6 +33,7 @@ import lightgbm as lgb
 from lightgbm import LGBMClassifier
 from sklearn.model_selection import RandomizedSearchCV
 
+from src.training.feature_selector import AnchoredFoldSelectionResult
 from src.training.metrics import FoldMetrics, compute_metrics
 
 
@@ -80,19 +81,20 @@ class SHAPResult:
 # ---------------------------------------------------------------------------
 
 def build_ablation_feature_set(
-    selected_features: list[str],
+    selection: AnchoredFoldSelectionResult,
     ablation: AblationType,
 ) -> list[str]:
     """
-    Return the feature list for a given ablation from the fold's selected features.
+    Return the feature list for a given ablation from an AnchoredFoldSelectionResult.
 
-    Ablation B (temporal only) uses TEMPORAL_COLS directly — mRMR is not
-    run on 3 features, so selected_features is ignored for ablation B.
+    Ablation A: selected_radiomic only
+    Ablation B: temporal cols only (mRMR not run)
+    Ablation C: selected_radiomic + temporal
+    Ablation D: full_feature_set (selected_radiomic + temporal + anchored_delta)
 
     Args:
-        selected_features: features selected by mRMR + Stability Selection
-                           on the Full set D for this fold.
-        ablation:          one of A, B, C, D.
+        selection: AnchoredFoldSelectionResult from select_features_fold_anchored.
+        ablation:  one of A, B, C, D.
 
     Returns:
         List of feature column names for this ablation.
@@ -104,29 +106,18 @@ def build_ablation_feature_set(
     if ablation == "B":
         return TEMPORAL_COLS.copy()
 
-    # For A, C, D: start from selected features
-    radiomic = [
-        f for f in selected_features
-        if not f.startswith("delta_")
-        and f not in TEMPORAL_COLS
-    ]
-    delta = [
-        f for f in selected_features
-        if f.startswith("delta_")
-    ]
-
     if ablation == "A":
-        result = radiomic
+        result = selection.selected_radiomic
     elif ablation == "C":
-        result = radiomic + TEMPORAL_COLS
+        result = selection.selected_radiomic + selection.temporal_cols
     elif ablation == "D":
-        result = radiomic + TEMPORAL_COLS + delta
+        result = selection.full_feature_set
     else:
         raise ValueError(f"Unknown ablation: '{ablation}'. Must be one of A/B/C/D.")
 
     if not result:
         raise ValueError(
-            f"Ablation {ablation}: empty feature list after filtering. "
+            f"Ablation {ablation}: empty feature list. "
             "Check that mRMR selected at least some radiomic features."
         )
     return result

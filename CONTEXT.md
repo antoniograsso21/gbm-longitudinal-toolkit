@@ -175,18 +175,28 @@ Step 8 — Paper (bioRxiv preprint)
 6. Metrics: macro F1, MCC, AUROC per class, PR-AUC per class — NEVER accuracy
    PR-AUC is primary for minority classes (Response 13%, Stable 11%) under heavy imbalance
 7. n_effective = 231 (DeepBraTumIA, LUMIERE v202211) — both t AND t+1 must have complete features
-8. Feature selection: mRMR + Stability Selection (τ=0.7, B=100 bootstrap)
+8. Feature selection: mRMR + Stability Selection on radiomic-only subset
    - Executed inside CV only — never on full dataset
    - Formula: max I(xi; y) - (1/|S|) * sum I(xi; xj∈S)
    - MI estimation: Kraskov estimator (continuous variables, small n)
-   - Stability measured both across bootstrap replicates AND across CV folds
-   - Features stable across both are the primary biological interpretation basis
-   - All models (LR, LightGBM, LSTM) run feature selection inside their own CV loop
+   - mRMR applied ONLY to radiomic features (not delta, not temporal)
+     Rationale: delta bootstrap stability is unreliable on mean sequence
+     length 3.6 timepoints — Kraskov MI estimates are dominated by
+     inter-scan variability rather than biological signal.
+   - Delta features handled via anchoring (label-free, no leakage):
+     anchored_delta = {delta_f : f in selected_radiomic AND variance > 1e-6}
+     Biological rationale: if a radiomic feature is stable, its rate of
+     change is biologically plausible as a temporal signal.
+   - Feature set per model:
+     LR: selected_radiomic only (cross-sectional, excludes nadir features)
+     LightGBM/LSTM/GNN: selected_radiomic + temporal (3) + anchored_delta
+   - tau calibrated empirically: start at 0.6, lower to 0.5 if needed.
+     tau=0.7 requires n>>200 per fold; LUMIERE has n≈185 per fold.
+   - Stability measured across bootstrap replicates (within fold) only.
+     Cross-fold aggregation via majority vote (≥3/5 folds) for YAML.
    - selected_features.yaml produced exclusively by LightGBM ablation D:
-     rationale: Full set D (radiomics + temporal + delta), most stable on small n,
-     SHAP provides independent validation of the mRMR selection.
-     LR uses radiomic-only subset; LSTM uses Full set D subset — neither exports
-     a permanent artefact. selected_features.yaml flows into Step 4 GraphConfig.
+     contains radiomic-only selected features (majority vote across folds).
+     Consumed by Step 4 GraphConfig.node_feature_cols.
 9. Discarded techniques: MINE, Direct Total Correlation, t-SNE, PCA, UMAP as model input;
    shift+log1p on bounded features; all-NaN detection (replaced by any-NaN per label block)
 10. UMAP allowed ONLY for exploratory visualization in the paper
