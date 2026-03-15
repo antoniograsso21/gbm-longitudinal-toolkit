@@ -188,7 +188,10 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
 **Execution scope**:
 - mRMR + Stability Selection on **Full set (D)** in all models (LR, LightGBM, LSTM)
 - LR uses the radiomic-only subset of the fold's selected features (no delta_*, no temporal)
-- Ablation B (temporal only, 3 features) skips mRMR — no selection needed
+- Ablation B (temporal only, 3 features) skips mRMR — no selection needed.
+  Guard in `_run_ablation_cv`: mRMR is called only if `ablation != 'B'`.
+  If multiple ablations are run together (default), mRMR runs once per fold
+  and its result is shared across A/C/D — B receives a sentinel empty result.
 
 ---
 
@@ -206,8 +209,9 @@ LR is the lower bound: if the GNN does not beat LR, the architecture adds no val
 C: [0.01, 0.1, 1.0, 10.0]
 max_iter: 1000
 class_weight: balanced
-multi_class: multinomial
 solver: lbfgs
+# multi_class removed — deprecated in scikit-learn 1.6+,
+# lbfgs uses multinomial by default for multiclass problems
 ```
 
 GridSearchCV inside each fold on the **selected features** (from T3.1, Full set D selection
@@ -238,7 +242,7 @@ for `early_stopping_rounds`. This set is not used for metric evaluation.
 | Ablation | Feature columns used |
 |---|---|
 | A | Radiomic set (1292 cols) — selected features only |
-| B | Temporal set (3 cols) — no selection needed |
+| B | Temporal set (3 cols) — no mRMR, default params: n_estimators=100, max_depth=3, learning_rate=0.05 |
 | C | Radiomic + Temporal (1295 cols) — selected features + temporal |
 | D | Full set: Radiomic + Temporal + Delta — mRMR input pool: 2579 cols → model input: selected features only |
 
@@ -306,14 +310,16 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 
 **MLflow experiment structure**:
 ```
-baselines/
-├── logistic_regression/    — 1 run per fold + 1 aggregated run
-├── lgbm_ablation_A/
-├── lgbm_ablation_B/
-├── lgbm_ablation_C/
-├── lgbm_ablation_D/        — includes SHAP artifacts
-└── lstm/
+baselines/logistic_regression    — 1 run: lr_cv (fold metrics + aggregated)
+baselines/lgbm                   — 1 run: lgbm_ablations
+                                   all ablations A/B/C/D in same run
+                                   metrics prefixed: A_fold_k_*, B_fold_k_*, ...
+                                   ablation D includes SHAP artifacts
+baselines/lstm                   — 1 run: lstm_cv (fold metrics + aggregated)
 ```
+
+All ablations in a single LightGBM run enables direct comparison in the
+MLflow dashboard without cross-experiment queries.
 
 **`baselines_validator.py`** post-hoc checks:
 - All 5 folds have metrics logged for every model

@@ -43,16 +43,16 @@ from pathlib import Path
 
 import mlflow
 import pandas as pd
+import yaml
 
 from src.models.logistic_baseline import (
-    fit_transform_fold,
     select_radiomic_features,
     train_lr_fold,
 )
 from src.training.cross_validation import build_cv_splits, load_random_config
 from src.training.feature_selector import select_features_fold
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
-from src.utils.lumiere_io import build_full_feature_set, print_section
+from src.utils.lumiere_io import build_full_feature_set, fit_transform_fold, print_section
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -61,7 +61,24 @@ from src.utils.lumiere_io import build_full_feature_set, print_section
 PARQUET_PATH: Path = Path("data/processed/preprocessing/dataset_engineered.parquet")
 OUTPUT_DIR: Path = Path("data/processed/baselines")
 RANDOM_STATE_PATH: str = "configs/random_state.yaml"
+LR_CONFIG_PATH: str = "configs/logistic_baseline.yaml"
 MLFLOW_EXPERIMENT: str = "baselines/logistic_regression"
+
+
+# ---------------------------------------------------------------------------
+# Config loader
+# ---------------------------------------------------------------------------
+
+def _load_lr_config(config_path: str) -> tuple[list[float], int]:
+    """
+    Load LR hyperparameter grid from YAML.
+
+    Returns:
+        Tuple (c_grid, inner_cv_splits).
+    """
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    return cfg["C"], int(cfg.get("inner_cv_splits", 3))
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +122,7 @@ def main(fast: bool = False) -> None:
         print("  ⚠️  FAST MODE — B=10, n_select=20. Smoke test only, not production.")
 
     seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
+    c_grid, inner_cv_splits = _load_lr_config(LR_CONFIG_PATH)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- Load data ---
@@ -142,7 +160,8 @@ def main(fast: bool = False) -> None:
         mlflow.log_param("seed", seed)
         mlflow.log_param("n_jobs", n_jobs)
         mlflow.log_param("n_splits", cv_splits.n_splits)
-        mlflow.log_param("C_grid", str([0.01, 0.1, 1.0, 10.0]))
+        mlflow.log_param("C_grid", str(c_grid))
+        mlflow.log_param("inner_cv_splits", inner_cv_splits)
         mlflow.log_param("class_weight", "balanced")
         mlflow.log_param("feature_set", "radiomic_only_selected")
 
@@ -207,6 +226,8 @@ def main(fast: bool = False) -> None:
                 y_test=y_test,
                 fold=fold_split.fold,
                 seed=seed,
+                c_grid=c_grid,
+                inner_cv_splits=inner_cv_splits,
             )
 
             print(

@@ -19,6 +19,7 @@ dependencies = [
     "tqdm>=4.66.5",
     "scikit-learn>=1.8.0",
     "protobuf>=4.21.0,<5.0.0",
+    "shap>=0.51.0",
 ]
 
 [[tool.uv.index]]

@@ -406,3 +406,73 @@ def build_full_feature_set(df: "pd.DataFrame") -> list[str]:
         "is_nadir_scan",   # boolean flag — incompatible with Kraskov k-NN MI estimator
     }
     return [c for c in df.columns if c not in exclude]
+
+
+def fit_transform_fold(
+    df_train: "pd.DataFrame",
+    df_test: "pd.DataFrame",
+    feature_cols: list[str],
+) -> "tuple[np.ndarray, np.ndarray]":
+    """
+    Fit StandardScaler on train fold only, transform both splits.
+
+    Scaler is fit exclusively on the training fold — never on the full
+    dataset or the test fold. This is enforced structurally: the scaler
+    object is local to this function and never returned.
+
+    Used by all run_*.py entry points (LR, LightGBM, LSTM).
+    Centralised here (DRY) to prevent divergence across models.
+
+    Args:
+        df_train:     training DataFrame (raw, unnormalised).
+        df_test:      test DataFrame (raw, unnormalised).
+        feature_cols: columns to select and normalise.
+
+    Returns:
+        Tuple (X_train_scaled, X_test_scaled) as numpy arrays.
+
+    Raises:
+        ValueError: if any feature_col is absent from df_train or df_test.
+    """
+    import numpy as _np
+    from sklearn.preprocessing import StandardScaler as _SS
+
+    missing_train = [c for c in feature_cols if c not in df_train.columns]
+    missing_test  = [c for c in feature_cols if c not in df_test.columns]
+    if missing_train:
+        raise ValueError(f"Columns missing from df_train: {missing_train}")
+    if missing_test:
+        raise ValueError(f"Columns missing from df_test: {missing_test}")
+
+    scaler = _SS()
+    X_train_scaled = scaler.fit_transform(df_train[feature_cols])
+    X_test_scaled  = scaler.transform(df_test[feature_cols])
+    return X_train_scaled, X_test_scaled
+
+
+def split_train_val(
+    X: "np.ndarray",
+    y: "np.ndarray",
+    val_fraction: float = 0.1,
+    seed: int = 42,
+) -> "tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]":
+    """
+    Stratified train/val split for early stopping.
+
+    Used by LightGBM and LSTM to hold out a small validation set for
+    early stopping. The val set is NEVER used for metric evaluation.
+    Centralised here (DRY) to prevent divergence across models.
+
+    Args:
+        X:            feature array, shape (n, d).
+        y:            integer label array, shape (n,).
+        val_fraction: fraction of data to use as val (default 0.1).
+        seed:         random seed.
+
+    Returns:
+        Tuple (X_tr, y_tr, X_val, y_val).
+    """
+    from sklearn.model_selection import StratifiedShuffleSplit as _SSS
+    sss = _SSS(n_splits=1, test_size=val_fraction, random_state=seed)
+    tr_idx, val_idx = next(sss.split(X, y))
+    return X[tr_idx], y[tr_idx], X[val_idx], y[val_idx]
