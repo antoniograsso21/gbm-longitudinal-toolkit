@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
+
 from src.training.metrics import FoldMetrics, compute_metrics
 
 
@@ -33,7 +34,8 @@ from src.training.metrics import FoldMetrics, compute_metrics
 # Constants — defaults used if YAML not provided (should not happen in practice)
 # ---------------------------------------------------------------------------
 
-C_GRID_DEFAULT: list[float] = [0.01, 0.1, 1.0, 10.0]
+# C_GRID_DEFAULT: list[float] = [0.01, 0.1, 1.0, 10.0]
+C_GRID_DEFAULT = np.logspace(-4, 2, 10).tolist()
 INNER_CV_SPLITS_DEFAULT: int = 3
 
 

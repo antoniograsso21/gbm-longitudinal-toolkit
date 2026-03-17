@@ -55,19 +55,30 @@ import pandas as pd
 from joblib import Parallel, delayed
 from npeet.entropy_estimators import mi as kraskov_mi
 from tqdm import tqdm
+from sklearn.model_selection import StratifiedShuffleSplit
+import hashlib
+import pickle
+from pathlib import Path
 
+# Nuova costante per la directory della cache
+CACHE_DIR = Path("data/processed/feature_selection_cache")
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 BOOTSTRAP_REPLICATES: int = 100       # production
-BOOTSTRAP_REPLICATES_FAST: int = 10   # smoke test only
-STABILITY_THRESHOLD: float = 0.7
-FOLD_MAJORITY_THRESHOLD: int = 3      # out of 5 folds
+STABILITY_THRESHOLD: float = 0.4      # production
 MRMR_N_SELECT: int = 50              # production
+
+BOOTSTRAP_REPLICATES_FAST: int = 10   # smoke test only
+STABILITY_THRESHOLD_FAST: float = 0.3  # smoke test only — τ=0.7 requires B>>10 to be meaningful
+MRMR_N_SELECT_FAST: int = 20         # smoke test only
+
+FOLD_MAJORITY_THRESHOLD: int = 3      # out of 5 folds
 VARIANCE_THRESHOLD: float = 1e-6     # near-constant features filtered before mRMR
                                      # label-free: computed on X only, safe inside CV fold
+                                    
 TEMPORAL_COLS: frozenset[str] = frozenset({  # never passed to mRMR
     "interval_weeks", "scan_index", "time_from_diagnosis_weeks",
 })
@@ -86,8 +97,6 @@ DELTA_DERIVED_COLS: frozenset[str] = frozenset({
     "delta_CE_NC_ratio",
     "delta_CE_vs_nadir",
 })
-MRMR_N_SELECT_FAST: int = 20         # smoke test only
-STABILITY_THRESHOLD_FAST: float = 0.3  # smoke test only — τ=0.7 requires B>>10 to be meaningful
 
 
 # ---------------------------------------------------------------------------
@@ -328,32 +337,41 @@ def run_stability_selection(
 
     Returns:
         Tuple of:
-            - stable_features: list of feature names with stability > tau.
+            - stable_features: list of feature names with stability >= tau.
             - bootstrap_stability: dict feature_name -> stability score (0.0–1.0).
     """
-    rng = np.random.default_rng(seed)
-    n_samples = X.shape[0]
-    subsample_size = max(1, n_samples // 2)
+    # rng = np.random.default_rng(seed)
+    # n_samples = X.shape[0]
+    # subsample_size = max(1, n_samples // 2)
 
     selection_counts: dict[str, int] = {name: 0 for name in feature_names}
 
     # Pre-generate all bootstrap indices deterministically before parallelisation.
     # Each replicate gets its own seed derived from the global seed to ensure
     # reproducibility regardless of execution order across parallel workers.
-    replicate_indices = [
-        rng.choice(n_samples, size=subsample_size, replace=False)
-        for _ in range(B)
-    ]
+    # replicate_indices = [
+    #     rng.choice(n_samples, size=subsample_size, replace=False)
+    #     for _ in range(B)
+    # ]
 
-    def _run_replicate(idx: np.ndarray) -> list[str]:
+    # Sostituisci la logica di rng.choice con:
+    sss = StratifiedShuffleSplit(n_splits=B, test_size=0.5, random_state=seed)
+    replicate_indices =[idx for idx, _ in sss.split(X, y)]
+
+    def _run_replicate(idx: np.ndarray, rep_idx: int) -> list[str]:
+        # FIX RIPRODUCIBILITÀ: npeet usa np.random internamente per il jittering.
+        # Dobbiamo fissare il seed legacy all'interno del worker parallelo
+        # per evitare race conditions sullo stato globale del RNG.
+        np.random.seed(seed + rep_idx) 
+        
         return run_mrmr(
             X[idx], y[idx], feature_names,
             n_select=n_select, k_mi=k_mi,
         )
 
     results: list[list[str]] = Parallel(n_jobs=n_jobs)(
-        delayed(_run_replicate)(idx)
-        for idx in tqdm(replicate_indices, desc=f"  Bootstrap replicates (B={B})", leave=False)
+        delayed(_run_replicate)(idx, i)
+        for i, idx in enumerate(tqdm(replicate_indices, desc=f"  Bootstrap replicates (B={B})", leave=False))
     )
 
     for selected in results:
@@ -367,10 +385,41 @@ def run_stability_selection(
 
     stable_features = [
         name for name, score in bootstrap_stability.items()
-        if score > tau
+        if score >= tau
     ]
 
     return stable_features, bootstrap_stability
+
+
+# ---------------------------------------------------------------------------
+# Caching Mechanism
+# ---------------------------------------------------------------------------
+
+def _generate_cache_path(
+    X_train: pd.DataFrame, 
+    y_train: np.ndarray, 
+    prefix: str, 
+    **kwargs
+) -> Path:
+    """
+    Genera un path univoco e sicuro per la cache basato sui dati e sui parametri.
+    """
+    # 1. Hash dei parametri (ordiniamo le chiavi per determinismo)
+    param_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+    param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
+    
+    # 2. Hash dei dati effettivi (sicurezza totale contro modifiche upstream)
+    # Su n=231 e ~2500 colonne sono circa 4MB, l'hashing impiega millisecondi.
+    data_bytes = X_train.values.tobytes() + y_train.tobytes()
+    data_hash = hashlib.md5(data_bytes).hexdigest()[:8]
+    
+    fold_idx = kwargs.get('fold', 'X')
+    filename = f"{prefix}_fold{fold_idx}_data{data_hash}_params{param_hash}.pkl"
+    
+    # Crea la cartella se non esiste
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    return CACHE_DIR / filename
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +503,8 @@ def select_features_fold(
             f"{len(feature_names)} remain"
         )
 
+    fold_seed = seed + fold 
+
     stable_features, bootstrap_stability = run_stability_selection(
         X=X_arr,
         y=y_train,
@@ -462,7 +513,7 @@ def select_features_fold(
         B=effective_B,
         tau=effective_tau,
         k_mi=k_mi,
-        seed=seed,
+        seed=fold_seed,
         n_jobs=n_jobs,
     )
 
@@ -583,6 +634,8 @@ def select_features_fold_anchored(
     radiomic_indices = [all_feature_names.index(f) for f in radiomic_names]
     X_radiomic = X_full[:, radiomic_indices]
 
+    fold_seed = seed + fold 
+    
     stable_radiomic, bootstrap_stability = run_stability_selection(
         X=X_radiomic,
         y=y_train,
@@ -591,7 +644,7 @@ def select_features_fold_anchored(
         B=effective_B,
         tau=effective_tau,
         k_mi=k_mi,
-        seed=seed,
+        seed=fold_seed, # Usa il fold_seed qui!
         n_jobs=n_jobs,
     )
 

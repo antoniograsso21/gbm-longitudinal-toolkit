@@ -293,22 +293,27 @@ def _run_ablation_cv(
             ablation=ablation,
         )
 
-        # 4 — index by name (robust to column order changes)
-        X_train_feat = X_train_scaled_df[feature_cols].values
-        X_test_feat  = pd.DataFrame(X_test_scaled, columns=all_feature_cols)[feature_cols].values
+        # 4 — index by name, mantieni DataFrame
+        X_train_feat_df = X_train_scaled_df[feature_cols]
+        X_test_feat_df  = pd.DataFrame(X_test_scaled, columns=all_feature_cols)[feature_cols]
 
-        # 5 — split train into train + val for early stopping
-        X_tr, y_tr, X_val, y_val = split_train_val(X_train_feat, y_train, VAL_FRACTION, seed)
+        # 5 — split train into train + val
+        X_tr_arr, y_tr, X_val_arr, y_val = split_train_val(
+            X_train_feat_df.values, y_train, VAL_FRACTION, seed
+        )
+        
+        # Ricostruisci i DataFrame
+        X_tr = pd.DataFrame(X_tr_arr, columns=feature_cols)
+        X_val = pd.DataFrame(X_val_arr, columns=feature_cols)
 
-        # 6 — train
+        # 6 — train (PASSANDO X_test_feat_df CHE È IL DATAFRAME!)
         result = train_lgbm_fold(
             X_train=X_tr,
             y_train=y_tr,
             X_val=X_val,
             y_val=y_val,
-            X_test=X_test_feat,
-            y_test=y_test,
-            fold=fold_split.fold,
+            X_test=X_test_feat_df, # <--- USA QUESTO
+            y_test=y_test,   fold=fold_split.fold,
             ablation=ablation,
             param_grid=param_grid,
             n_iter=n_iter,
@@ -435,6 +440,8 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
         for ablation in ablations:
             print_section(f"Ablation {ablation}")
 
+            run_jobs = 2 if fast else n_jobs
+
             fold_results, aggregated, fold_sel = _run_ablation_cv(
                 ablation=ablation,
                 df=df,
@@ -443,7 +450,7 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
                 param_grid=param_grid,
                 n_iter=n_iter,
                 seed=seed,
-                n_jobs=n_jobs,
+                n_jobs=run_jobs,
                 fast=fast,
                 verbose=verbose,
             )

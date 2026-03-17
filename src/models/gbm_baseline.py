@@ -25,7 +25,8 @@ Design:
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Union
+import pandas as pd
 
 import numpy as np
 import shap
@@ -36,6 +37,8 @@ from sklearn.model_selection import RandomizedSearchCV
 from src.training.feature_selector import AnchoredFoldSelectionResult
 from src.training.metrics import FoldMetrics, compute_metrics
 
+# Aggiorna gli type hint per accettare sia DataFrame che Array
+ArrayLike = Union[pd.DataFrame, np.ndarray]
 
 # ---------------------------------------------------------------------------
 # Ablation type
@@ -128,11 +131,11 @@ def build_ablation_feature_set(
 # ---------------------------------------------------------------------------
 
 def train_lgbm_fold(
-    X_train: np.ndarray,
+    X_train: ArrayLike,
     y_train: np.ndarray,
-    X_val: np.ndarray,
+    X_val: ArrayLike,
     y_val: np.ndarray,
-    X_test: np.ndarray,
+    X_test: ArrayLike,
     y_test: np.ndarray,
     fold: int,
     ablation: AblationType,
@@ -186,7 +189,7 @@ def train_lgbm_fold(
             scoring="f1_macro",
             refit=False,           # we refit manually with early stopping
             random_state=seed,
-            n_jobs=-1,
+            n_jobs=1,
         )
         # Search on train only (not val — val is for early stopping only)
         search.fit(X_train, y_train)
