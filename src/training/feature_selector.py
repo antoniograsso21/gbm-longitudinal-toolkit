@@ -386,6 +386,14 @@ def select_features_fold_anchored(
     radiomic_indices = [all_feature_names.index(f) for f in radiomic_names]
     X_radiomic = X_full[:, radiomic_indices]
 
+    if len(radiomic_names) < 20:
+        print(
+            f"  ⚠️  [feature_selector fold={fold}] "
+            f"radiomic pool has only {len(radiomic_names)} features after variance filter. "
+            f"Stability Selection may be unreliable — consider lowering VARIANCE_THRESHOLD "
+            f"or checking for upstream preprocessing issues."
+        )
+
     stable_radiomic, bootstrap_stability = run_stability_selection(
         X=X_radiomic,
         y=y_train,
@@ -421,7 +429,13 @@ def select_features_fold_anchored(
     temporal = [c for c in all_feature_names if c in TEMPORAL_COLS]
     nadir = [c for c in all_feature_names if c in NADIR_COLS and c in variance_passed]
     delta_derived = [c for c in all_feature_names if c in DELTA_DERIVED_COLS and c in variance_passed]
-    full_feature_set = stable_radiomic + temporal + nadir + anchored_delta + delta_derived
+    full_feature_set = (
+        stable_radiomic +
+        sorted(temporal) +
+        sorted(nadir) +
+        sorted(anchored_delta) +
+        sorted(delta_derived)
+    )
 
     print(
         f"  [feature_selector fold={fold}] "

@@ -352,7 +352,7 @@ def _run_shap(
     )
 
     # Feature names stored in the booster — no need to re-run selection
-    feature_cols: list[str] = best_result.model.booster_.feature_name()
+    feature_cols: list[str] = best_result.feature_cols
     X_te = pd.DataFrame(X_test_scaled, columns=all_feature_cols)[feature_cols].values
 
     shap_result = compute_shap(

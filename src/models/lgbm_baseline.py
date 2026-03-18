@@ -67,6 +67,7 @@ class LGBMFoldResult:
     n_train: int
     n_test: int
     n_features: int
+    feature_cols: list[str]
     model: object   # fitted LGBMClassifier — used for SHAP in ablation D
 
 
@@ -235,6 +236,7 @@ def train_lgbm_fold(
         n_train=len(y_train),
         n_test=len(y_test),
         n_features=X_train.shape[1],
+        feature_cols=list(X_train.columns) if hasattr(X_train, "columns") else [],
         model=final_model,
     )
 
