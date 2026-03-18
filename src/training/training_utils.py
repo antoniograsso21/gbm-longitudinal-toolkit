@@ -16,7 +16,7 @@ Functions:
     load_seed           — load random seed from YAML
     load_random_config  — load seed + n_jobs from YAML
 """
-
+from __future__ import annotations
 import numpy as np
 import yaml
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -24,6 +24,27 @@ from sklearn.preprocessing import StandardScaler
 
 import pandas as pd
 
+import hashlib
+import pickle
+from pathlib import Path
+
+from typing import TYPE_CHECKING
+
+from src.training.feature_selector import (
+    BOOTSTRAP_REPLICATES,
+    BOOTSTRAP_REPLICATES_FAST,
+    MRMR_N_SELECT,
+    MRMR_N_SELECT_FAST,
+    STABILITY_THRESHOLD,
+    STABILITY_THRESHOLD_FAST,
+    VARIANCE_THRESHOLD,
+    select_features_fold_anchored
+)
+
+if TYPE_CHECKING:
+    from src.training.feature_selector import (
+        AnchoredFoldSelectionResult
+    )
 
 # ---------------------------------------------------------------------------
 # Normalisation
@@ -146,3 +167,81 @@ def load_random_config(config_path: str = "configs/random_state.yaml") -> tuple[
             "Expected format: 'seed: 42'"
         )
     return int(cfg["seed"]), int(cfg.get("n_jobs", -1))
+
+
+# ---------------------------------------------------------------------------
+# Cached feature selection wrapper
+# ---------------------------------------------------------------------------
+
+FEATURE_SELECTION_CACHE_DIR = Path("data/processed/feature_selection_cache")
+
+
+def select_features_fold_anchored_cached(
+    X_train: "pd.DataFrame",
+    y_train: "np.ndarray",
+    fold: int,
+    **kwargs,
+) -> "AnchoredFoldSelectionResult":
+    """
+    Cached wrapper around select_features_fold_anchored.
+
+    Computes a deterministic cache key from data content + parameters.
+    On cache hit: loads and returns the cached result.
+    On cache miss: runs selection, saves result, returns it.
+
+    Cache lives in data/processed/feature_selection_cache/ — excluded from
+    DVC tracking (add to .dvcignore). Safe to delete to force recomputation.
+
+    Side effects are intentional here — this is a utility wrapper,
+    not a pure function. Pure logic lives in feature_selector.py.
+    {'seed': 42, 'fast': False, 'n_jobs': 6, 'verbose': True}
+     cache_kwargs = {
+        "fold": fold, "n_select": effective_n_select, "B": effective_B,
+        "tau": effective_tau, "k_mi": k_mi, "seed": seed, "fast": fast,
+        "variance_threshold": VARIANCE_THRESHOLD
+    }
+    """
+    # Build cache key from parameters + data fingerprint
+    fast = kwargs.get("fast", False)
+    seed = kwargs.get("seed", 42)
+    
+    effective_B = kwargs.get("B") or (BOOTSTRAP_REPLICATES_FAST if fast else BOOTSTRAP_REPLICATES)
+    effective_n_select = kwargs.get("n_select") or (MRMR_N_SELECT_FAST if fast else MRMR_N_SELECT)
+    tau = kwargs.get("tau", STABILITY_THRESHOLD)
+    effective_tau = (STABILITY_THRESHOLD_FAST if fast and tau == STABILITY_THRESHOLD else tau)
+    
+    cache_kwargs = {
+        "fold": fold,
+        "B": effective_B,
+        "n_select": effective_n_select,
+        "tau": effective_tau,
+        "k_mi": kwargs.get("k_mi", 3),
+        "seed": seed,
+        "fast": fast,
+        "variance_threshold": VARIANCE_THRESHOLD,
+    }
+    param_str = "_".join(f"{k}={v}" for k, v in sorted(cache_kwargs.items()))
+    param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
+    data_hash = hashlib.md5(
+        X_train.values.tobytes() + y_train.tobytes()
+    ).hexdigest()[:8]
+    filename = f"anchored_fold{fold}_data{data_hash}_params{param_hash}.pkl"
+    print(filename)
+
+    FEATURE_SELECTION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = FEATURE_SELECTION_CACHE_DIR / filename
+
+    if cache_path.exists():
+        print(f"  [cache] fold={fold} ♻️  loading from {cache_path.name}")
+        with open(cache_path, "rb") as f:
+            return pickle.load(f)
+
+    result: AnchoredFoldSelectionResult = select_features_fold_anchored(
+        X_train=X_train, y_train=y_train, fold=fold, **kwargs
+    )
+
+    with open(cache_path, "wb") as f:
+        pickle.dump(result, f)
+    print(f"  [cache] fold={fold} 💾  saved to {cache_path.name}")
+
+    return result

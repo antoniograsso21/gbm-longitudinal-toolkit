@@ -51,12 +51,14 @@ from src.training.feature_selector import (
     AnchoredFoldSelectionResult,
     BOOTSTRAP_REPLICATES,
     BOOTSTRAP_REPLICATES_FAST,
+    FoldSelectionResult,
     MRMR_N_SELECT,
     MRMR_N_SELECT_FAST,
     STABILITY_THRESHOLD,
     STABILITY_THRESHOLD_FAST,
-    select_features_fold_anchored,
+    aggregate_fold_selections,
 )
+from src.training.training_utils import select_features_fold_anchored_cached
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import fit_transform_fold, load_random_config
 from src.utils.lumiere_io import build_full_feature_set, print_section
@@ -194,7 +196,7 @@ def main(fast: bool = False, verbose: bool = False) -> None:
             X_train_scaled_df = pd.DataFrame(
                 X_train_scaled, columns=all_feature_cols
             )
-            selection: AnchoredFoldSelectionResult = select_features_fold_anchored(
+            selection: AnchoredFoldSelectionResult = select_features_fold_anchored_cached(
                 X_train=X_train_scaled_df,
                 y_train=y_train,
                 fold=fold_split.fold,
