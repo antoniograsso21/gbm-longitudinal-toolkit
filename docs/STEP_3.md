@@ -146,10 +146,17 @@ The mandatory call pattern inside every `run_*.py`:
 ```python
 # inside each fold, after normalisation:
 X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=all_feature_cols)
-selection = select_features_fold_anchored(X_train=X_train_scaled_df, y_train=y_train, fold=k)
+selection = select_features_fold_anchored_cached(
+    X_train=X_train_scaled_df, y_train=y_train, fold=k,
+    cache_dir="data/processed/feature_selection_cache/"
+)
 # LR uses: selection.selected_radiomic
 # LightGBM/LSTM/GNN use: selection.full_feature_set
 ```
+`select_features_fold_anchored_cached` is defined in `training_utils.py` and wraps
+`select_features_fold_anchored` with pickle-based fold-level caching under
+`data/processed/feature_selection_cache/fold_{k}.pkl`. Cache is keyed on fold index;
+delete the cache dir to force recomputation.
 
 `selected_features.yaml` is produced **only** at the end of `run_lgbm_baseline.py`
 (T3.3, ablation D) via `aggregate_fold_selections()`. It contains the **radiomic-only**
@@ -165,9 +172,14 @@ MI estimator: Kraskov k-NN via `npeet` library (correct for continuous variables
 discretisation-based estimator inappropriate for the radiomic feature distribution.
 
 **Stability Selection**:
-- B=100 bootstrap replicates on the training fold
-- Feature bootstrap stability = fraction of replicates in which feature is selected
-- Keep features with bootstrap stability > τ=0.7
+- B=100 replicates on the training fold using `StratifiedShuffleSplit` (50% subsample, stratified by class)
+- This departs from classical bootstrap (sampling with replacement, uniform):
+  `StratifiedShuffleSplit` preserves the 76/11/13 class distribution per replicate,
+  preventing minority-class collapse on small folds. **Declare this deviation in Methods.**
+- Feature stability = fraction of replicates in which feature is selected
+- Keep features with stability > τ=0.6
+- **Warning**: if `n_radiomic_candidates < 20` after variance filter on a fold, log
+  a `WARNING: low radiomic pool after variance filter` and skip mRMR for that fold.
 
 **Cross-fold stability** (computed in T3.3 aggregation only):
 - Stability score (fold) = fraction of folds in which feature passes bootstrap threshold
@@ -198,7 +210,7 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
 1. Variance threshold on full set (label-free) → remove near-constant features
 2. mRMR + Stability Selection on radiomic-only subset → selected_radiomic
 3. Anchored delta = {delta_f : f in selected_radiomic AND delta_f passes variance}
-4. full_feature_set = selected_radiomic + temporal (3) + anchored_delta
+4. full_feature_set = stable_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
 ```
 Biological motivation for anchoring: if a radiomic feature is stable and
 informative, its rate of change is biologically plausible. Including all
@@ -210,7 +222,7 @@ unreliable on sequences of mean length 3.6 timepoints.
 - mRMR + Stability Selection on **radiomic-only subset** in all models
 - LR uses `selected_radiomic` only — pure cross-sectional static baseline
   (no delta, no temporal, no nadir features CE_vs_nadir/weeks_since_nadir)
-- LightGBM/LSTM/GNN use `full_feature_set` = selected_radiomic + temporal + anchored_delta
+- LightGBM/LSTM/GNN use `full_feature_set` = stable_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
 - Ablation B (temporal only, 3 features) skips mRMR — sentinel result used.
   Guard in `_run_ablation_cv`: `select_features_fold_anchored` called only if `ablation != 'B'`.
   When multiple ablations run together, mRMR runs once per fold and result
@@ -244,7 +256,16 @@ applied to the Radiomic subset). Normalization applied before GridSearchCV.
 
 ## T3.3 — Baseline 2: LightGBM + Ablations A/B/C/D + SHAP
 
-**File**: `src/models/gbm_baseline.py`
+**File**: `src/models/lgbm_baseline.py`
+
+`LGBMFoldResult` contains `feature_cols: list[str]` saved at train time alongside
+the booster. SHAP uses `best_result.feature_cols` (not `booster_.feature_name_()`)
+because `feature_name_()` can return internal names after model serialisation/deserialisation;
+using the recorded columns avoids silent misalignment.
+
+train/val/test are always passed to LightGBM as `pd.DataFrame` with column names
+(never as raw numpy arrays) to suppress LightGBM's unnamed-feature warnings and
+keep `feature_cols` aligned with the booster's internal registry.
 
 ```yaml
 # configs/gbm_baseline.yaml
@@ -330,6 +351,10 @@ random.seed(42); np.random.seed(42); torch.manual_seed(42)
 ---
 
 ## T3.5 — MLflow Consolidation and Validator
+
+**`feature_selector.py`** exposes a single entry point: `select_features_fold_anchored`.
+`select_features_fold` is eliminated — all callers use the anchored variant.
+`training_utils.py` exposes `select_features_fold_anchored_cached` wrapping the above.
 
 **Files**: `src/training/trainer.py`, `src/validation/baselines_validator.py`
 
