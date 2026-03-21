@@ -1,0 +1,8 @@
+selected_features:
+- CE_CT1_original_firstorder_10Percentile
+- CE_CT1_original_glcm_DifferenceVariance
+- CE_T1_original_glcm_Idmn
+- CE_T2_original_firstorder_Skewness
+n_selected: 4
+majority_vote_threshold: 3
+n_folds: 5

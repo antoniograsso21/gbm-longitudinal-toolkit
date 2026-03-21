@@ -273,10 +273,25 @@ def compute_shap(
     # shap_values is list of arrays (one per class) for multiclass
     # shape per class: (n_samples, n_features)
     # mean |SHAP| per feature: average over classes and samples
-    mean_abs = np.mean(
-        [np.abs(sv).mean(axis=0) for sv in shap_values],
-        axis=0,
-    )
+    # mean_abs = np.mean(
+    #     [np.abs(sv).mean(axis=0) for sv in shap_values],
+    #     axis=0,
+    # )
+
+    shap_arr = np.array(shap_values)
+    if shap_arr.ndim == 3:
+        # new SHAP: (n_samples, n_features, n_classes)
+        # old SHAP: (n_classes, n_samples, n_features)
+        # discrimina: se shape[2] == n_features → old, se shape[1] == n_features → new
+        n_features = len(feature_names)
+        if shap_arr.shape[1] == n_features:
+            # (n_samples, n_features, n_classes)
+            mean_abs = np.abs(shap_arr).mean(axis=(0, 2))
+        else:
+            # (n_classes, n_samples, n_features)
+            mean_abs = np.abs(shap_arr).mean(axis=(0, 1))
+    elif shap_arr.ndim == 2:
+        mean_abs = np.abs(shap_arr).mean(axis=0)
 
     # Rank by mean |SHAP| descending (1-based)
     ranked_indices = np.argsort(mean_abs)[::-1]

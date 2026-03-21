@@ -355,6 +355,7 @@ def _run_shap(
     feature_cols: list[str] = best_result.feature_cols
     X_te = pd.DataFrame(X_test_scaled, columns=all_feature_cols)[feature_cols].values
 
+    print(f"feature_cols in best_result: {best_result.feature_cols}")
     shap_result = compute_shap(
         model=best_result.model,
         X_test=X_te,
