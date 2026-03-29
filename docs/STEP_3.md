@@ -155,8 +155,15 @@ selection = select_features_fold_anchored_cached(
 ```
 `select_features_fold_anchored_cached` is defined in `training_utils.py` and wraps
 `select_features_fold_anchored` with pickle-based fold-level caching under
-`data/processed/feature_selection_cache/fold_{k}.pkl`. Cache is keyed on fold index;
-delete the cache dir to force recomputation.
+`data/processed/feature_selection_cache/`.
+
+**Caching behavior (important)**:
+- Cache is **not** keyed on fold index alone.
+- Cache filenames encode a fingerprint of the fold’s `(X_train, y_train)` **and** a fingerprint
+  of the selection parameters (fold, B, n_select, tau, k_mi, seed, fast, variance_threshold).
+- Changing `tau` (or any selection hyperparameter) therefore changes the cache key automatically.
+  Delete the cache directory only if you intentionally want to force recomputation despite an
+  apparent cache hit.
 
 `selected_features.yaml` is produced **only** at the end of `run_lgbm_baseline.py`
 (T3.3, ablation D) via `aggregate_fold_selections()`. It contains the **radiomic-only**
@@ -177,7 +184,14 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
   `StratifiedShuffleSplit` preserves the 76/11/13 class distribution per replicate,
   preventing minority-class collapse on small folds. **Declare this deviation in Methods.**
 - Feature stability = fraction of replicates in which feature is selected
-- Keep features with stability > τ=0.6
+- Keep features with stability ≥ \( \tau \)
+
+**Stability threshold \( \tau \)**:
+- The literature “ideal” \( \tau=0.7 \) is often unstable on small folds.
+- On LUMIERE (n≈185 per fold), calibrate \( \tau \) empirically by monitoring
+  `n_radiomic_selected`, `n_delta_anchored`, and downstream CV metrics.
+- **Current code default**: `STABILITY_THRESHOLD = 0.4` in `src/training/feature_selector.py`.
+  More conservative (often reasonable) settings are \( \tau=0.5 \) or \( \tau=0.6 \).
 - **Warning**: if `n_radiomic_candidates < 20` after variance filter on a fold, log
   a `WARNING: low radiomic pool after variance filter` and skip mRMR for that fold.
 
@@ -195,8 +209,6 @@ discretisation-based estimator inappropriate for the radiomic feature distributi
   Expected runtime: 3–6h on CPU (i7-7700HQ) with joblib + MI cache. Run overnight.
   On laptops set n_jobs=6 in random_state.yaml to reduce thermal load (~2 thread headroom for OS).
 - tau is calibrated empirically on this dataset (n≈185 per fold, radiomic-only pool).
-  Production default: tau=0.6. Start at 0.6; if fold 0 gives 0 features lower to 0.5.
-  tau=0.7 (Meinshausen & Bühlmann recommendation) requires n>>200 per fold to be stable.
   Document the chosen tau and calibration rationale in the paper Methods section.
   Monitor n_radiomic_selected and n_delta_anchored in MLflow after each run.
 

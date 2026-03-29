@@ -190,8 +190,12 @@ Step 8 — Paper (bioRxiv preprint)
    - Feature set per model:
      LR: selected_radiomic only (cross-sectional, excludes nadir features)
      LightGBM/LSTM/GNN: selected_radiomic + temporal (3) + anchored_delta
-   - tau calibrated empirically: start at 0.6, lower to 0.5 if needed.
-     tau=0.7 requires n>>200 per fold; LUMIERE has n≈185 per fold.
+   - Stability threshold \( \tau \) is calibrated empirically.
+     Practical guidance: tau=0.7 (Meinshausen & Bühlmann) typically requires n>>200 per fold;
+     LUMIERE has n≈185 per fold.
+     **Current implementation default**: `STABILITY_THRESHOLD = 0.4` in `src/training/feature_selector.py`.
+     If you want a more conservative selection, run with tau=0.5–0.6 and compare fold-level
+     `n_radiomic_selected` and downstream metrics (document the chosen value in Methods).
    - Stability measured across bootstrap replicates (within fold) only.
      Cross-fold aggregation via majority vote (≥3/5 folds) for YAML.
    - selected_features.yaml produced exclusively by LightGBM ablation D:
@@ -217,6 +221,21 @@ Step 8 — Paper (bioRxiv preprint)
 14. GNN is an exploratory component, not the central scientific claim.
     The pipeline architecture and reproducibility are the primary contributions.
 15. Generalisation deferred to Step 7: pipeline is LUMIERE-specific in V1.
+
+---
+
+## Feature selection cache (operational note)
+Feature selection is expensive (mRMR + Stability Selection). A cached wrapper exists:
+`src/training/training_utils.py::select_features_fold_anchored_cached`.
+
+- Cache location: `data/processed/feature_selection_cache/`
+- Cache keying: **content + parameters**, not just fold index.
+  The cache filename encodes:
+  - a data fingerprint of `(X_train, y_train)` for that fold, and
+  - a parameter fingerprint (fold, B, n_select, tau, k_mi, seed, fast, variance_threshold).
+- Consequence: changing `tau` (or other parameters) automatically changes the cache key.
+  You should delete the cache directory only if you want to force recomputation despite an
+  apparent cache hit (e.g., after code changes that alter behavior without changing the key).
 
 ---
 
