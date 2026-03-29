@@ -72,6 +72,7 @@ from src.training.feature_selector import (
 from src.training.training_utils import select_features_fold_anchored_cached
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import (
+    build_run_info,
     fit_transform_fold,
     load_random_config,
     split_train_val,
@@ -412,6 +413,15 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
     print(f"  Full feature set: {len(all_feature_cols)} columns")
     print(f"  n_effective: {len(df)} | n_patients: {groups.nunique()}")
 
+    # --- Minimal run provenance for JSON (full params live in MLflow) ---
+    run_info = build_run_info(
+        seed=seed,
+        parquet_path=str(PARQUET_PATH.as_posix()),
+        n_rows=int(df.shape[0]),
+        n_patients=int(groups.nunique()),
+        script_path=str(Path(__file__).as_posix()),
+    )
+
     cv_splits = build_cv_splits(
         X=df[all_feature_cols],
         y=pd.Series(y),
@@ -473,9 +483,11 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
 
             # Save per-ablation JSON (model field excluded — not serialisable)
             report = {
+                "schema_version": "baselines.v1",
                 "model": "lgbm",
                 "ablation": ablation,
                 "seed": seed,
+                "run_info": run_info,
                 "fold_results": [_fold_result_to_dict(r) for r in fold_results],
                 "aggregated": asdict(aggregated),
             }

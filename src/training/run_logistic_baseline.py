@@ -60,7 +60,7 @@ from src.training.feature_selector import (
 )
 from src.training.training_utils import select_features_fold_anchored_cached
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
-from src.training.training_utils import fit_transform_fold, load_random_config
+from src.training.training_utils import build_run_info, fit_transform_fold, load_random_config
 from src.utils.lumiere_io import build_full_feature_set, print_section
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,15 @@ def main(fast: bool = False, verbose: bool = False) -> None:
 
     print(f"  Full feature set: {len(all_feature_cols)} columns")
     print(f"  n_effective: {len(df)} | n_patients: {groups.nunique()}")
+
+    # --- Minimal run provenance for JSON (full params live in MLflow) ---
+    run_info = build_run_info(
+        seed=seed,
+        parquet_path=str(PARQUET_PATH.as_posix()),
+        n_rows=int(df.shape[0]),
+        n_patients=int(groups.nunique()),
+        script_path=str(Path(__file__).as_posix()),
+    )
 
     # --- CV splits ---
     cv_splits = build_cv_splits(
@@ -249,7 +258,16 @@ def main(fast: bool = False, verbose: bool = False) -> None:
             mlflow.log_metric(f"fold_{fold_split.fold}_best_C", result.best_C)
 
             fold_metrics_list.append(result.metrics)
-            fold_results_raw.append(asdict(result))
+            # Add reproducibility fields (feature names + selection summary).
+            fold_payload = asdict(result)
+            fold_payload["feature_cols"] = list(radiomic_cols)
+            fold_payload["selection_summary"] = {
+                "n_radiomic_candidates": int(selection.n_radiomic_candidates),
+                "n_radiomic_selected": int(selection.n_radiomic_selected),
+                "n_delta_anchored": int(selection.n_delta_anchored),
+                "fast_mode": bool(selection.fast_mode),
+            }
+            fold_results_raw.append(fold_payload)
 
         # --- Aggregate ---
         aggregated = aggregate_cv_results(fold_metrics_list)
@@ -263,9 +281,11 @@ def main(fast: bool = False, verbose: bool = False) -> None:
 
         # --- Save JSON report ---
         output = {
+            "schema_version": "baselines.v1",
             "model": "logistic_regression",
             "feature_set": "radiomic_only_selected",
             "seed": seed,
+            "run_info": run_info,
             "fold_results": fold_results_raw,
             "aggregated": asdict(aggregated),
         }

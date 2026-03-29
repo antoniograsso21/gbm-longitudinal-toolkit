@@ -48,12 +48,11 @@ import numpy as np
 import pandas as pd
 import yaml
 from src.models.lstm_baseline import (
-    LSTMFoldResult,
     build_patient_sequences,
     compute_class_weights,
     train_lstm_fold,
 )
-from src.training.cross_validation import CVSplits, build_cv_splits
+from src.training.cross_validation import build_cv_splits
 from src.training.feature_selector import (
     AnchoredFoldSelectionResult,
     BOOTSTRAP_REPLICATES_FAST,
@@ -62,6 +61,7 @@ from src.training.feature_selector import (
 )
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import (
+    build_run_info,
     fit_transform_fold,
     load_random_config,
     select_features_fold_anchored_cached,
@@ -136,7 +136,7 @@ def _grid_search_lstm(
     val_sequences: list[dict],
     config: dict,
     fold: int,
-    class_weights: "torch.Tensor",
+    class_weights: object,
     seed: int,
 ) -> tuple[int, int, float, float]:
     """
@@ -250,6 +250,15 @@ def main(fast: bool = False, verbose: bool = False) -> None:
 
     print(f"  Full feature set: {len(all_feature_cols)} columns")
     print(f"  n_effective: {len(df)} | n_patients: {groups.nunique()}")
+
+    # --- Minimal run provenance for JSON (full params live in MLflow) ---
+    run_info = build_run_info(
+        seed=seed,
+        parquet_path=str(PARQUET_PATH.as_posix()),
+        n_rows=int(df.shape[0]),
+        n_patients=int(groups.nunique()),
+        script_path=str(Path(__file__).as_posix()),
+    )
 
     cv_splits = build_cv_splits(
         X=df[all_feature_cols],
@@ -391,7 +400,16 @@ def main(fast: bool = False, verbose: bool = False) -> None:
             mlflow.log_metric(f"fold_{fold_split.fold}_epochs", result.n_epochs_trained)
 
             fold_metrics_list.append(result.metrics)
-            fold_results_raw.append(asdict(result))
+            fold_payload = asdict(result)
+            fold_payload["best_weight_decay"] = float(best_wd)
+            fold_payload["feature_cols"] = list(feature_cols)
+            fold_payload["selection_summary"] = {
+                "n_radiomic_candidates": int(selection.n_radiomic_candidates),
+                "n_radiomic_selected": int(selection.n_radiomic_selected),
+                "n_delta_anchored": int(selection.n_delta_anchored),
+                "fast_mode": bool(selection.fast_mode),
+            }
+            fold_results_raw.append(fold_payload)
 
         # --- Aggregate ---
         aggregated = aggregate_cv_results(fold_metrics_list)
@@ -405,9 +423,11 @@ def main(fast: bool = False, verbose: bool = False) -> None:
 
         # --- Save JSON ---
         output = {
+            "schema_version": "baselines.v1",
             "model": "lstm",
             "feature_set": "full_set_D_anchored",
             "seed": seed,
+            "run_info": run_info,
             "fold_results": fold_results_raw,
             "aggregated": asdict(aggregated),
         }

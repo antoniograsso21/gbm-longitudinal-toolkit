@@ -26,6 +26,7 @@ import pandas as pd
 
 import hashlib
 import pickle
+from datetime import datetime, timezone
 from pathlib import Path
 
 from typing import TYPE_CHECKING
@@ -245,3 +246,32 @@ def select_features_fold_anchored_cached(
     print(f"  [cache] fold={fold} 💾  saved to {cache_path.name}")
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Run metadata helpers (pure)
+# ---------------------------------------------------------------------------
+
+def build_run_info(
+    *,
+    seed: int,
+    parquet_path: str,
+    n_rows: int,
+    n_patients: int,
+    script_path: str,
+) -> dict:
+    """
+    Minimal run provenance for JSON outputs.
+
+    Intentionally lightweight: MLflow carries the full parameter surface area.
+    JSON stores only enough to tie a results file to a concrete dataset snapshot
+    and execution context.
+    """
+    return {
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "script": script_path,
+        "seed": int(seed),
+        "parquet": parquet_path,
+        "n_rows": int(n_rows),
+        "n_patients": int(n_patients),
+    }
