@@ -3,11 +3,11 @@
 # Best config selected by validation val_loss (30-epoch proxy).
 # Final model trained with full patience on the best config.
 
-hidden_size: [16, 32, 64, 128]
+hidden_size: [16, 32, 64]
 num_layers: [1, 2]
 dropout: [0.2, 0.3, 0.5]
 learning_rate: [5.0e-3, 1.0e-3, 1.0e-4]
-weight_decay: [1.0e-3, 1.0e-4]
+weight_decay: [1.0e-4]
 batch_size: 16
 max_epochs: 100
 patience: 15
