@@ -275,9 +275,12 @@ the booster. SHAP uses `best_result.feature_cols` (not `booster_.feature_name_()
 because `feature_name_()` can return internal names after model serialisation/deserialisation;
 using the recorded columns avoids silent misalignment.
 
-train/val/test are always passed to LightGBM as `pd.DataFrame` with column names
-(never as raw numpy arrays) to suppress LightGBM's unnamed-feature warnings and
-keep `feature_cols` aligned with the booster's internal registry.
+For robustness, feature columns are recorded explicitly in `LGBMFoldResult.feature_cols`
+and used downstream (including SHAP) to avoid silent misalignment even if arrays are
+passed at prediction time. Note: LightGBM may emit a warning if a model is fit with
+feature names (DataFrame) and later evaluated with unnamed numpy arrays — this is
+not a correctness issue if column ordering is consistent, but should be avoided in
+future refactors by keeping DataFrames end-to-end where practical.
 
 ```yaml
 # configs/gbm_baseline.yaml
@@ -419,6 +422,39 @@ Report mean ± std across folds for all metrics.
 | LSTM                      |                |     |        |        |          |             |
 | GNN 2-node (Step 4)       |                |     |        |        |          |             |
 | GNN 3-node (Step 4)       |                |     |        |        |          |             |
+
+---
+
+## Current Results (DeepBraTumIA, n_effective=231, 5-fold CV)
+
+Run date: 2026-03-15. Reported as mean ± std across folds.
+
+| Model                   | macro F1      | MCC           | AUC-PD        | AUC-SD        | AUC-Resp      | PR-AUC-Resp   | PR-AUC-Stable   |
+|:------------------------|:--------------|:--------------|:--------------|:--------------|:--------------|:--------------|:----------------|
+| Logistic Regression     | 0.314 ± 0.052 | 0.087 ± 0.092 | 0.587 ± 0.094 | 0.631 ± 0.165 | 0.405 ± 0.168 | 0.176 ± 0.077 | 0.239 ± 0.089   |
+| LightGBM A (radiomic)   | 0.327 ± 0.068 | 0.009 ± 0.122 | 0.520 ± 0.094 | 0.634 ± 0.149 | 0.337 ± 0.166 | 0.134 ± 0.049 | 0.297 ± 0.134   |
+| LightGBM B (temporal)   | 0.373 ± 0.036 | 0.152 ± 0.054 | 0.676 ± 0.093 | 0.425 ± 0.200 | 0.608 ± 0.091 | 0.331 ± 0.156 | 0.134 ± 0.042   |
+| LightGBM C (radio+temp) | 0.322 ± 0.048 | 0.036 ± 0.091 | 0.563 ± 0.089 | 0.655 ± 0.159 | 0.403 ± 0.167 | 0.162 ± 0.077 | 0.333 ± 0.149   |
+| LightGBM D (full)       | 0.337 ± 0.044 | 0.043 ± 0.101 | 0.532 ± 0.089 | 0.657 ± 0.113 | 0.378 ± 0.177 | 0.167 ± 0.102 | 0.266 ± 0.094   |
+| LSTM                    | 0.315 ± 0.037 | 0.040 ± 0.175 | 0.624 ± 0.319 | 0.929 ± 0.000 | 0.553 ± 0.260 | 0.270 ± 0.156 | 0.500 ± 0.000   |
+
+### Interpretation (what this implies for Step 4)
+
+- **Temporal leakage is likely present**: LightGBM B (temporal-only) is the strongest baseline
+  on macro F1 and PR-AUC(Response). This must be declared in the paper and treated as the
+  primary confounder.
+- **SHAP confirms temporal dominance in the full model**: in LightGBM D, `interval_weeks` is
+  ranked **5th** by mean |SHAP| (from `data/processed/interpretability/shap_top20.csv`),
+  triggering the Step 3 leakage flag (rank ≤ 5).
+- **Radiomic signal appears weak at this stage**: A and C are close to LR and do not exceed B.
+  Under the Step 3 decision rule, this is consistent with “weak radiomic signal (relative to
+  scheduling effects)”.
+- **Delta anchoring does not materially improve over C** in these runs (D ≈ C).
+- **LSTM does not clearly beat LightGBM**, consistent with the expectation under short mean
+  sequence length (~3.6 timepoints). Treat as an honest result.
+
+Implication: Step 4 should be framed as **exploratory** and must be compared directly to
+LightGBM B (temporal-only) and LightGBM D (full) — beating LR is not sufficient if B is higher.
 
 ---
 
