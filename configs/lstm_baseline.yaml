@@ -1,18 +1,13 @@
-hidden_size:
-  - 32
-  - 64
-  - 128
-num_layers:
-  - 1
-  - 2
-dropout:
-  - 0.2
-  - 0.3
-  - 0.5
-learning_rate:
-  - 0.001
-  - 0.0005
+# configs/lstm_baseline.yaml
+# LSTM hyperparameter grid — manual search inside each CV fold.
+# Best config selected by validation val_loss (30-epoch proxy).
+# Final model trained with full patience on the best config.
+
+hidden_size: [16, 32, 64, 128]
+num_layers: [1, 2]
+dropout: [0.2, 0.3, 0.5]
+learning_rate: [5.0e-3, 1.0e-3, 1.0e-4]
+weight_decay: [1.0e-3, 1.0e-4]
 batch_size: 16
 max_epochs: 100
 patience: 15
-val_fraction: 0.1

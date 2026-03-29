@@ -123,20 +123,32 @@ def compute_metrics(
             f"Got shape {y_proba.shape}."
         )
 
-    macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
-    mcc = matthews_corrcoef(y_true, y_pred)
+    # Passiamo esplicitamente l'elenco di tutte le etichette possibili [0, 1, 2]
+    all_labels = list(CLASS_NAMES.keys())
 
-    # One-vs-rest per class
+    # 1. Macro F1: specificando labels, calcola 0 per le classi mancanti invece di dare errore/warning
+    macro_f1 = f1_score(y_true, y_pred, labels=all_labels, average="macro", zero_division=0)
+    
+    # 2. MCC: matthews_corrcoef non supporta il parametro labels, 
+    # ma è matematicamente definito solo se sono presenti almeno due classi.
+    # Se il test set ha solo una classe, MCC è indefinito (spesso 0 o NaN).
+    if len(np.unique(y_true)) < 2:
+        mcc = 0.0 # O np.nan, a seconda di come vuoi gestire il caso limite
+    else:
+        mcc = matthews_corrcoef(y_true, y_pred)
+
+    # 3. One-vs-rest per class
     auroc: dict[str, float] = {}
     prauc: dict[str, float] = {}
     for class_idx, class_name in CLASS_NAMES.items():
         binary_true = (y_true == class_idx).astype(int)
         proba_col = y_proba[:, class_idx]
 
-        # If only one class present in this fold's test set, metric is undefined
+        # Se la classe è completamente assente nel fold, AUC è indefinito.
+        # Il check binary_true.sum() == 0 va bene, ma possiamo essere più espliciti.
         if binary_true.sum() == 0 or binary_true.sum() == n:
-            auroc[class_name] = float("nan")
-            prauc[class_name] = float("nan")
+            auroc[class_name] = np.nan
+            prauc[class_name] = np.nan
         else:
             auroc[class_name] = roc_auc_score(binary_true, proba_col)
             prauc[class_name] = average_precision_score(binary_true, proba_col)
