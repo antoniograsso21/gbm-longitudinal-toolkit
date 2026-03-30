@@ -390,7 +390,7 @@ MLflow dashboard without cross-experiment queries.
 - All 5 folds have metrics logged for every model
 - `selected_features.yaml` exists and contains ≥ 1 feature
 - No metric value is NaN
-- Comparison table is fully populated
+- Baseline JSONs under `data/processed/baselines/` exist; **Current Results** in this doc matches the latest run (or regenerate from those JSONs)
 
 ---
 
@@ -410,18 +410,9 @@ Report mean ± std across folds for all metrics.
 
 ---
 
-## Comparison Table (target output)
+## Baseline comparison (Step 3)
 
-| Model                     | macro F1 ± std | MCC | AUC-PD | AUC-SD | AUC-Resp | PR-AUC-Resp |
-|---------------------------|----------------|-----|--------|--------|----------|-------------|
-| Logistic Regression       |                |     |        |        |          |             |
-| LightGBM (full D)         |                |     |        |        |          |             |
-| Ablation A (radiomics)    |                |     |        |        |          |             |
-| Ablation B (temporal)     |                |     |        |        |          |             |
-| Ablation C (radio+temp)   |                |     |        |        |          |             |
-| LSTM                      |                |     |        |        |          |             |
-| GNN 2-node (Step 4)       |                |     |        |        |          |             |
-| GNN 3-node (Step 4)       |                |     |        |        |          |             |
+The filled numeric table for LR, LightGBM A–D, and LSTM lives in **Current Results** below (single source of truth for Step 3). After Step 4, add GNN 2-node and 3-node rows there, or mirror them in the paper Methods/Results table from the Step 4 runs.
 
 ---
 
@@ -466,7 +457,7 @@ LightGBM B (temporal-only) and LightGBM D (full) — beating LR is not sufficien
 - [ ] T3.3: LightGBM ablations A/B/C/D on MLflow; SHAP beeswarm + top-20 table saved; decision rules documented
 - [ ] T3.3: `selected_features.yaml` committed (produced by LightGBM D only), stability scores logged, fold-level JSONs saved
 - [ ] T3.4: LSTM CV results logged to MLflow; `pack_padded_sequence` tested on variable-length inputs
-- [ ] T3.5: validator exits 0; comparison table fully populated
+- [ ] T3.5: validator exits 0; **Current Results** section updated (or equivalent JSON/paper table from baselines)
 - [ ] Normalization verified: scaler fit only on train fold (never on full dataset)
 - [ ] All random seeds fixed and logged (seed=42 from `configs/random_state.yaml`)
 - [ ] `interval_weeks` SHAP rank reported; leakage flag set if rank ≤ 5
