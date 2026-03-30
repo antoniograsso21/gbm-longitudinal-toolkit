@@ -1,0 +1,34 @@
+# configs/gnn.yaml
+# Hyperparameters for TumorTemporalGNN (Step 4).
+# All values read by run_gnn.py — nothing hardcoded in src/.
+#
+# Grid search runs for each fold:
+#   hidden × heads × dropout × learning_rate
+# Reduced grid compared to LightGBM: on n=231 deep architecture search
+# risks overfit. Prefer the smallest architecture that matches LightGBM.
+#
+# Ablation flags are set via CLI --ablation, not here.
+
+# GATv2Conv + TemporalAttention hyperparameters
+hidden: [32, 64]              # output channels per head in GATv2Conv
+heads: [1, 2]                 # attention heads per GATv2Conv layer
+n_gnn_layers: 1               # 1 = default; 2 = only if A1 ablation confirms gain
+n_temporal_heads: 1           # multi-head temporal attention heads
+dropout: [0.2, 0.3]           # shared dropout (GNN + temporal attention)
+edge_dim: 2                   # [volumetric_ratio, interval_weeks] — fixed
+
+# Optimiser
+learning_rate: [1.0e-3, 5.0e-4]
+weight_decay: 1.0e-4          # AdamW regularisation
+
+# Training loop
+batch_size: 8                 # patient sequences per mini-batch
+max_epochs: 200
+patience: 20                  # early stopping patience (val_loss)
+grad_clip_norm: 1.0           # gradient clipping (prevents exploding on small batches)
+
+# Val split (patient-level, inside each fold)
+val_fraction: 0.10            # ~6 patients per fold used for early stopping only
+
+# Output
+n_classes: 3                  # Progressive=0, Stable=1, Response=2

@@ -283,7 +283,7 @@ not a correctness issue if column ordering is consistent, but should be avoided 
 future refactors by keeping DataFrames end-to-end where practical.
 
 ```yaml
-# configs/gbm_baseline.yaml
+# configs/lgbm_baseline.yaml
 n_estimators: [100, 300, 500]
 max_depth: [3, 5, 7]
 learning_rate: [0.01, 0.05, 0.1]
@@ -427,7 +427,7 @@ Report mean ± std across folds for all metrics.
 
 ## Current Results (DeepBraTumIA, n_effective=231, 5-fold CV)
 
-Run date: 2026-03-15. Reported as mean ± std across folds.
+Run date: 2026-03-29. Reported as mean ± std across folds.
 
 | Model                   | macro F1      | MCC           | AUC-PD        | AUC-SD        | AUC-Resp      | PR-AUC-Resp   | PR-AUC-Stable   |
 |:------------------------|:--------------|:--------------|:--------------|:--------------|:--------------|:--------------|:----------------|

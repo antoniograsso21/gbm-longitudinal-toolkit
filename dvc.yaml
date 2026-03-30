@@ -6,8 +6,8 @@
 #   audit/         → lumiere_audit
 #   preprocessing/ → dataset_builder, features_builder
 #   validation/    → dataset_validator, features_validator, graphs_validator
-#   graphs/        → graphs_builder
-#   training/      → baselines_runner, gnn_runner
+#   graphs/        → graph_builder
+#   training/      → run_lgbm_baseline, run_lr_baseline, run_lstm_baseline, run_gnn
 #   uncertainty/   → conformal_runner
 #
 # Stages marked ⏳ are not yet implemented and are commented out.
@@ -74,74 +74,195 @@ stages:
       - data/processed/validation/features_validator_report.json
 
   # ---------------------------------------------------------------------------
-  # Step 3 — Baseline Models ⏳
-  # Uncomment when src/training/baselines_runner.py is implemented.
+  # Step 3 — Baseline Models ✅
+  # Three independent runners; only lgbm produces selected_features.yaml.
+  # Feature selection cache (data/processed/feature_selection_cache/) is in
+  # .dvcignore — expensive to recompute, safe to keep across runs.
   # ---------------------------------------------------------------------------
-  # baselines_runner:
-  #   cmd: uv run -m src.training.baselines_runner --config configs/gbm_baseline.yaml
-  #   deps:
-  #     - data/processed/preprocessing/dataset_engineered.parquet
-  #     - data/processed/validation/features_validator_report.json
-  #     - src/training/baselines_runner.py
-  #     - src/utils/lumiere_io.py
-  #     - configs/gbm_baseline.yaml
-  #     - configs/logistic_baseline.yaml
-  #     - configs/lstm_baseline.yaml
-  #     - configs/feature_selector.yaml
-  #   outs:
-  #     - configs/selected_features.yaml
-  #   metrics:
-  #     - data/processed/validation/baselines_metrics.json:
-  #         cache: false
+
+  run_lgbm_baseline:
+    cmd: uv run -m src.training.run_lgbm_baseline
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - src/models/lgbm_baseline.py
+      - src/training/run_lgbm_baseline.py
+      - src/training/feature_selector.py
+      - src/training/cross_validation.py
+      - src/training/training_utils.py
+      - src/training/metrics.py
+      - src/utils/lumiere_io.py
+      - configs/lgbm_baseline.yaml
+      - configs/random_state.yaml
+    outs:
+      - configs/selected_features.yaml
+      - data/processed/baselines/fold_stability.json
+      - data/processed/interpretability/shap_top20.csv
+      - data/processed/interpretability/shap_beeswarm.png
+    metrics:
+      - data/processed/baselines/lgbm_A_results.json:
+          cache: false
+      - data/processed/baselines/lgbm_B_results.json:
+          cache: false
+      - data/processed/baselines/lgbm_C_results.json:
+          cache: false
+      - data/processed/baselines/lgbm_D_results.json:
+          cache: false
+
+  run_lr_baseline:
+    cmd: uv run -m src.training.run_logistic_baseline
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - src/models/logistic_baseline.py
+      - src/training/run_logistic_baseline.py
+      - src/training/feature_selector.py
+      - src/training/cross_validation.py
+      - src/training/training_utils.py
+      - src/training/metrics.py
+      - src/utils/lumiere_io.py
+      - configs/logistic_baseline.yaml
+      - configs/random_state.yaml
+    metrics:
+      - data/processed/baselines/lr_results.json:
+          cache: false
+
+  run_lstm_baseline:
+    cmd: uv run -m src.training.run_lstm_baseline
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - src/models/lstm_baseline.py
+      - src/training/run_lstm_baseline.py
+      - src/training/feature_selector.py
+      - src/training/cross_validation.py
+      - src/training/training_utils.py
+      - src/training/metrics.py
+      - src/utils/lumiere_io.py
+      - configs/lstm_baseline.yaml
+      - configs/random_state.yaml
+    metrics:
+      - data/processed/baselines/lstm_results.json:
+          cache: false
 
   # ---------------------------------------------------------------------------
-  # Step 4 — Graph Construction ⏳
-  # Uncomment when src/graphs/graphs_builder.py is implemented.
+  # Step 4 — Graph Construction ✅
   # ---------------------------------------------------------------------------
-  # graphs_builder:
-  #   cmd: uv run -m src.graphs.graphs_builder
-  #   deps:
-  #     - data/processed/preprocessing/dataset_engineered.parquet
-  #     - configs/selected_features.yaml
-  #     - src/graphs/graphs_builder.py
-  #     - src/utils/lumiere_io.py
-  #     - configs/graph_config.yaml
-  #   outs:
-  #     - data/processed/graphs/
 
-  # graphs_validator:
-  #   cmd: uv run -m src.validation.graphs_validator
-  #   deps:
-  #     - data/processed/graphs/
-  #     - src/validation/graphs_validator.py
-  #     - src/utils/lumiere_io.py
-  #   outs:
-  #     - data/processed/validation/graphs_validator_report.json
+  # 3-node graphs (DeepBraTumIA — primary)
+  graph_builder_3node:
+    cmd: uv run -m src.graphs.graph_builder --topology 3node
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - configs/selected_features.yaml
+      - src/graphs/graph_builder.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/graphs/3node/
+      - data/processed/graphs/graph_builder_report_3node.json
+
+  # 2-node graphs (HD-GLIO-AUTO — ablation A6)
+  graph_builder_2node:
+    cmd: uv run -m src.graphs.graph_builder --topology 2node
+    deps:
+      - data/processed/preprocessing/dataset_engineered.parquet
+      - data/processed/validation/features_validator_report.json
+      - configs/selected_features.yaml
+      - src/graphs/graph_builder.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/graphs/2node/
+      - data/processed/graphs/graph_builder_report_2node.json
+
+  # Validator — 3-node (blocks GNN training)
+  graphs_validator_3node:
+    cmd: uv run -m src.validation.graphs_validator --topology 3node
+    deps:
+      - data/processed/graphs/3node/
+      - src/validation/graphs_validator.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/validation/graphs_validator_report_3node.json
+
+  # Validator — 2-node (warning-level; does not block primary GNN)
+  graphs_validator_2node:
+    cmd: uv run -m src.validation.graphs_validator --topology 2node
+    deps:
+      - data/processed/graphs/2node/
+      - src/validation/graphs_validator.py
+      - src/utils/lumiere_io.py
+    outs:
+      - data/processed/validation/graphs_validator_report_2node.json
 
   # ---------------------------------------------------------------------------
   # Step 4 — GNN Training ⏳
-  # Uncomment when src/training/gnn_runner.py is implemented.
+  # Uncomment when graph sequences and selected_features.yaml are ready.
   # ---------------------------------------------------------------------------
-  # gnn_runner:
-  #   cmd: uv run -m src.training.gnn_runner --config configs/gnn.yaml
+  # gnn_runner_full:
+  #   cmd: uv run -m src.training.run_gnn --ablation full --topology 3node
   #   deps:
-  #     - data/processed/graphs/
-  #     - data/processed/validation/graphs_validator_report.json
-  #     - src/training/gnn_runner.py
+  #     - data/processed/graphs/3node/
+  #     - data/processed/validation/graphs_validator_report_3node.json
+  #     - configs/selected_features.yaml
+  #     - src/models/gnn.py
+  #     - src/models/temporal_attention.py
+  #     - src/models/tumor_gnn.py
+  #     - src/training/run_gnn.py
+  #     - src/training/training_utils.py
+  #     - src/utils/lumiere_io.py
+  #     - configs/gnn.yaml
+  #     - configs/random_state.yaml
+  #   metrics:
+  #     - data/processed/gnn/gnn_full_3node_results.json:
+  #         cache: false
+
+  # gnn_runner_A1:
+  #   cmd: uv run -m src.training.run_gnn --ablation A1 --topology 3node
+  #   deps:
+  #     - data/processed/graphs/3node/
+  #     - data/processed/validation/graphs_validator_report_3node.json
+  #     - configs/selected_features.yaml
+  #     - src/models/gnn.py
+  #     - src/models/temporal_attention.py
+  #     - src/models/tumor_gnn.py
+  #     - src/training/run_gnn.py
   #     - configs/gnn.yaml
   #   metrics:
-  #     - data/processed/validation/gnn_metrics.json:
+  #     - data/processed/gnn/gnn_A1_3node_results.json:
+  #         cache: false
+
+  # gnn_runner_A4:
+  #   cmd: uv run -m src.training.run_gnn --ablation A4 --topology 3node
+  #   deps:
+  #     - data/processed/graphs/3node/
+  #     - configs/selected_features.yaml
+  #     - src/models/tumor_gnn.py
+  #     - configs/gnn.yaml
+  #   metrics:
+  #     - data/processed/gnn/gnn_A4_3node_results.json:
+  #         cache: false
+
+  # gnn_runner_A6:
+  #   cmd: uv run -m src.training.run_gnn --ablation A6 --topology 2node
+  #   deps:
+  #     - data/processed/graphs/2node/
+  #     - data/processed/validation/graphs_validator_report_2node.json
+  #     - configs/selected_features.yaml
+  #     - src/models/tumor_gnn.py
+  #     - configs/gnn.yaml
+  #   metrics:
+  #     - data/processed/gnn/gnn_A6_2node_results.json:
   #         cache: false
 
   # ---------------------------------------------------------------------------
   # Step 6 — Uncertainty Quantification ⏳
-  # Uncomment when src/uncertainty/conformal_runner.py is implemented.
   # ---------------------------------------------------------------------------
   # conformal_runner:
   #   cmd: uv run -m src.uncertainty.conformal_runner --config configs/conformal.yaml
   #   deps:
-  #     - data/processed/graphs/
-  #     - data/processed/validation/gnn_metrics.json
+  #     - data/processed/graphs/3node/
+  #     - data/processed/gnn/gnn_full_3node_results.json
   #     - src/uncertainty/conformal_runner.py
   #     - configs/conformal.yaml
   #   metrics:

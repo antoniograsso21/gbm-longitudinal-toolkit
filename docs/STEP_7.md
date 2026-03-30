@@ -15,7 +15,7 @@ graph_config.yaml        — node order, edge features, label mapping
 features_builder.yaml    — feature engineering params (epsilon, volume cols)
 feature_selector.yaml    — mRMR params, stability threshold
 logistic_baseline.yaml
-gbm_baseline.yaml
+lgbm_baseline.yaml
 lstm_baseline.yaml
 gnn.yaml
 conformal.yaml
@@ -25,7 +25,7 @@ conformal.yaml
 ```bash
 uv run -m src.preprocessing.dataset_builder
 uv run -m src.graphs.graphs_builder
-uv run -m src.training.run_baselines --config configs/gbm_baseline.yaml
+uv run -m src.training.run_baselines --config configs/lgbm_baseline.yaml
 uv run -m src.training.run_gnn --config configs/gnn.yaml
 uv run -m src.uncertainty.run_conformal --config configs/conformal.yaml
 ```

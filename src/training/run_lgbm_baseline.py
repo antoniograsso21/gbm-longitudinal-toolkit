@@ -88,7 +88,7 @@ OUTPUT_DIR: Path = Path("data/processed/baselines")
 INTERP_DIR: Path = Path("data/processed/interpretability")
 SELECTED_FEATURES_PATH: Path = Path("configs/selected_features.yaml")
 FOLD_STABILITY_PATH: Path = Path("data/processed/baselines/fold_stability.json")
-GBM_CONFIG_PATH: str = "configs/gbm_baseline.yaml"
+GBM_CONFIG_PATH: str = "configs/lgbm_baseline.yaml"
 RANDOM_STATE_PATH: str = "configs/random_state.yaml"
 
 ABLATIONS: list[AblationType] = ["A", "B", "C", "D"]
