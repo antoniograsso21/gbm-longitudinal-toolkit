@@ -386,16 +386,17 @@ def build_node_features(
         ValueError: if any node ends up with zero radiomic features
                     (indicates a misconfigured GraphConfig).
     """
-    # Scalar context — same value broadcast to every node
-    scalar_vals: list[float] = []
-    for sf in config.scalar_features:
-        if sf == "is_baseline_scan":
-            scalar_vals.append(float(bool(row.get(sf, False))))
-        elif sf in row.index:
-            scalar_vals.append(float(row[sf]))
-        else:
-            scalar_vals.append(0.0)
+    # 1. Max feature width across nodes: each row is [radiomic | delta | scalars];
+    #    shorter rows are zero-padded so all nodes share the same column dim (PyG).
+    max_len = 0
+    # Theoretical max from this config (depends on how many cols each prefix has).
+    for prefix in config.node_order:
+        n_rad = len(node_feature_cols.get(prefix, []))
+        n_delta = len(delta_feature_cols.get(prefix, []))
+        n_scalar = len(config.scalar_features)
+        max_len = max(max_len, n_rad + n_delta + n_scalar)
 
+    # 2. Build one row per node, then pad to max_len.
     node_rows: list[list[float]] = []
     for prefix in config.node_order:
         radiomic_cols = node_feature_cols.get(prefix, [])
@@ -403,8 +404,22 @@ def build_node_features(
 
         radiomic_vals = row[radiomic_cols].values.astype(float).tolist() if radiomic_cols else []
         delta_vals = row[delta_cols].values.astype(float).tolist() if delta_cols else []
+        
+        # Scalar context
+        scalar_vals = []
+        for sf in config.scalar_features:
+            if sf == "is_baseline_scan":
+                scalar_vals.append(float(bool(row.get(sf, False))))
+            elif sf in row.index:
+                scalar_vals.append(float(row[sf]))
+            else:
+                scalar_vals.append(0.0)
 
-        node_rows.append(radiomic_vals + delta_vals + scalar_vals)
+        full_row = radiomic_vals + delta_vals + scalar_vals
+        
+        # 3. Zero-pad shorter nodes (e.g. NE vs CE with fewer selected features).
+        padding = [0.0] * (max_len - len(full_row))
+        node_rows.append(full_row + padding)
 
     return torch.tensor(node_rows, dtype=torch.float)
 
