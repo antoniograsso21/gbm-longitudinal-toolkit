@@ -1,0 +1,32 @@
+# configs/feature_selector.yaml
+# ================================
+# Feature selection method and parameters.
+# Read by src/training/feature_selector.py at runtime.
+#
+# Changing 'method' invalidates the feature selection cache.
+# Delete data/processed/feature_selection_cache/ after any method change.
+#
+# Decision rule (from diagnostic analysis, LUMIERE v202211):
+#   Spearman ρ = 0.226 on fold 0, B=30 probe replicates
+#   ρ < 0.30 → mRMR rankings unstable → use mi_univariate
+#   See: diagnose_feature_selection_report.json
+
+method: mi_univariate
+justification: "mRMR disabled due to low rank consistency (Spearman rho=0.226 on diagnostic run, B=30). See diagnose_feature_selection_report.json."
+
+# ---------------------------------------------------------------------------
+# MI univariate parameters (active when method=mi_univariate)
+# ---------------------------------------------------------------------------
+percentile: 5.0        # top 5% of radiomic features by MI score (~64/1284 on LUMIERE)
+n_neighbors: 5         # k for sklearn MI estimator; 5 for stability on small n (vs default 3)
+                       # same rationale as increasing k in Kraskov: reduces variance on n<200
+
+# ---------------------------------------------------------------------------
+# mRMR parameters (active when method=mrmr)
+# Reference path — not recommended for LUMIERE (rho=0.226)
+# ---------------------------------------------------------------------------
+n_select: 50           # mRMR candidates per replicate
+B: 100                 # bootstrap replicates
+tau: 0.40              # stability threshold (empirically calibrated; tau=0.7 requires n>>1000)
+k_mi: 3                # Kraskov MI k; increase to 5-7 for n<200
+check_consistency: true  # run rank-consistency probe before full bootstrap; warns if rho<0.30
