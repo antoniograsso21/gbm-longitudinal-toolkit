@@ -131,6 +131,11 @@ def select_features_fold_anchored_cached(
     """
     Cached wrapper around select_features_fold_anchored.
 
+    LEAKAGE GUARD: only X_train and y_train are passed to the selector.
+    X_test is never seen here or in any called function. fold is used
+    exclusively for cache key derivation and seed offset — it carries
+    no label or feature information from the test split.
+
     Cache key includes method + all relevant parameters so changing method
     or any parameter automatically produces a different cache key.
     Delete data/processed/feature_selection_cache/ to force full recomputation.

@@ -48,7 +48,7 @@ import yaml
 from src.models.logistic_baseline import train_lr_fold
 from src.training.cross_validation import build_cv_splits
 from src.training.feature_selector import (
-    AnchoredFoldSelectionResult,
+    SelectionResult,
     BOOTSTRAP_REPLICATES,
     BOOTSTRAP_REPLICATES_FAST,
     FoldSelectionResult,
@@ -205,7 +205,7 @@ def main(fast: bool = False, verbose: bool = False) -> None:
             X_train_scaled_df = pd.DataFrame(
                 X_train_scaled, columns=all_feature_cols
             )
-            selection: AnchoredFoldSelectionResult = select_features_fold_anchored_cached(
+            selection: SelectionResult = select_features_fold_anchored_cached(
                 X_train=X_train_scaled_df,
                 y_train=y_train,
                 fold=fold_split.fold,

@@ -144,6 +144,7 @@ def select_features_fold_anchored(
             percentile=percentile,
             n_neighbors=n_neighbors,
             seed=seed,
+            fast=kwargs.pop("fast", False),
             verbose=verbose,
             justification=justification,
         )

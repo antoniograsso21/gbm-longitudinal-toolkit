@@ -84,12 +84,14 @@ class MIFoldSelectionResult:
     temporal_cols: list[str]
     full_feature_set: list[str]
     mi_scores: dict[str, float]        # MI score per radiomic candidate (all, not just selected)
-    mi_threshold: float                # actual MI cutoff used
+    mi_threshold: float                # MI score of last selected feature (effective cutoff)
     n_radiomic_candidates: int
     n_radiomic_selected: int
     n_delta_anchored: int
+    fast_mode: bool
     percentile_used: float
     n_neighbors_used: int
+    selection_hash: str = ""           # md5[:8] of sorted(selected_radiomic) — reproducibility check
     method: str = "mi_univariate"
 
 
@@ -104,6 +106,7 @@ def select_features_fold_mi(
     percentile: float = PERCENTILE,
     n_neighbors: int = N_NEIGHBORS,
     seed: int = 42,
+    fast: bool = False,
     verbose: bool = False,
     justification: str = "",
 ) -> MIFoldSelectionResult:
@@ -186,18 +189,24 @@ def select_features_fold_mi(
         for name, score in zip(radiomic_names, mi_scores_array)
     }
 
-    # Select top percentile%
+    # Select top percentile% by MI score.
+    # argsort used directly — no separate threshold variable to avoid paper
+    # ambiguity between "threshold-based" and "rank-based" selection.
+    # The MI score of the last selected feature is logged as the effective cutoff.
     n_select = max(1, int(np.ceil(len(radiomic_names) * percentile / 100.0)))
-    threshold = np.percentile(mi_scores_array, 100.0 - percentile)
-    # Use argsort to get exactly n_select features (avoids tie ambiguity at threshold)
     sorted_idx = np.argsort(mi_scores_array)[::-1][:n_select]
     selected_radiomic = [radiomic_names[i] for i in sorted_idx]
+    mi_cutoff = float(mi_scores_array[sorted_idx[-1]])
 
-    actual_threshold = float(mi_scores_array[sorted_idx[-1]])
+    import hashlib as _hashlib
+    selection_hash = _hashlib.md5(
+        str(sorted(selected_radiomic)).encode()
+    ).hexdigest()[:8]
 
     logger.info(
         f"{method_tag} radiomic: {len(radiomic_names)} candidates → "
-        f"{len(selected_radiomic)} selected (top {percentile}%, MI threshold={actual_threshold:.4f})"
+        f"{len(selected_radiomic)} selected (top {percentile}%, "
+        f"MI cutoff={mi_cutoff:.4f}, selection_hash={selection_hash})"
     )
 
     if verbose:
@@ -241,10 +250,12 @@ def select_features_fold_mi(
         temporal_cols=temporal,
         full_feature_set=full_feature_set,
         mi_scores=mi_scores,
-        mi_threshold=actual_threshold,
+        mi_threshold=mi_cutoff,
         n_radiomic_candidates=len(radiomic_names),
         n_radiomic_selected=len(selected_radiomic),
         n_delta_anchored=len(anchored_delta),
+        fast_mode=fast,
         percentile_used=percentile,
         n_neighbors_used=n_neighbors,
+        selection_hash=selection_hash,
     )
