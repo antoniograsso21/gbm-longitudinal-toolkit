@@ -4,7 +4,8 @@ src/training/run_lgbm_baseline.py
 Entry point for the LightGBM baseline (Step 3 — T3.3).
 
 Runs four ablations (A/B/C/D) inside StratifiedGroupKFold CV with
-feature selection (mRMR + Stability Selection) inside each fold.
+feature selection inside each fold (production: MI univariate + delta anchoring;
+reference: mRMR + stability, configurable via `configs/feature_selector.yaml`).
 
 This is the only script that writes configs/selected_features.yaml —
 produced from ablation D fold results via aggregate_fold_selections().
@@ -258,7 +259,7 @@ def _run_ablation_cv(
     n_jobs: int,
     fast: bool,
     verbose: bool = False,
-) -> tuple[list[LGBMFoldResult], AggregatedMetrics, list[FoldSelectionResult]]:
+) -> tuple[list[LGBMFoldResult], AggregatedMetrics, list[FoldSelectionResult], list[dict]]:
     """
     Run full CV for a single ablation.
 
@@ -266,6 +267,7 @@ def _run_ablation_cv(
         fold_results:           per-fold LGBMFoldResult (includes fitted model)
         aggregated:             mean±std metrics across folds
         fold_selection_results: per-fold FoldSelectionResult (D only, else empty)
+        fold_feature_selection: per-fold selection summary (D only, else empty)
     """
     y = df["target_encoded"].values
     fold_results: list[LGBMFoldResult] = []
@@ -375,16 +377,7 @@ def _run_ablation_cv(
         fold_metrics_list.append(result.metrics)
 
     aggregated = aggregate_cv_results(fold_metrics_list)
-    # Attach selection metadata to results (ablation D only) without changing model dataclasses.
-    # This is consumed by the outer reporter to persist selection_hash into JSON artifacts.
-    if ablation == "D" and fold_feature_selection_meta:
-        for r in fold_results:
-            # store as an attribute for later serialization (safe: dataclass -> dict via asdict ignores it)
-            setattr(r, "_feature_selection_meta", None)
-        # we return meta via a private attribute on the list object to avoid signature churn
-        setattr(fold_selection_results, "_feature_selection_meta", fold_feature_selection_meta)
-
-    return fold_results, aggregated, fold_selection_results
+    return fold_results, aggregated, fold_selection_results, fold_feature_selection_meta
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +506,7 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
         for ablation in ablations:
             print_section(f"Ablation {ablation}")
 
-            fold_results, aggregated, fold_sel = _run_ablation_cv(
+            fold_results, aggregated, fold_sel, fold_fs_meta = _run_ablation_cv(
                 ablation=ablation,
                 df=df,
                 all_feature_cols=all_feature_cols,
@@ -560,7 +553,6 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
             }
             if ablation == "D":
                 # Persist feature selection summary (incl. selection_hash) into JSON artifacts.
-                fold_fs_meta = getattr(fold_sel, "_feature_selection_meta", [])
                 if fold_fs_meta:
                     report["fold_feature_selection"] = fold_fs_meta
             report_path = OUTPUT_DIR / f"lgbm_{ablation}_results.json"
