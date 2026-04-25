@@ -102,9 +102,9 @@ Four mandatory ablations (executed in Step 3, reported in paper):
   Additional: interval_weeks SHAP rank in final LightGBM model.
 
 ### 3. Feature Selection must live inside cross-validation
-Feature selection (mRMR + Stability Selection) is executed fold-by-fold inside
-the training loop — never on the full dataset. Doing it outside CV is data leakage.
-The parquet from Step 1 contains all 1284 features; selection happens in Step 3.
+Feature selection is executed fold-by-fold inside the training loop — never on
+the full dataset. Doing it outside CV is data leakage. The parquet from Step 1
+contains the full radiomic + delta pool; selection happens in Step 3.
 
 ### 4. Temporal class imbalance (beyond standard class imbalance)
 Patients responding to therapy tend to have fewer scans and more distant follow-ups.
@@ -143,7 +143,7 @@ Step 2 — Feature Engineering (exploratory, no label-dependent selection)
     features_validator.py → features_validator_report.json
     ↓
 Step 3 — Baseline Models (LR → LightGBM+SHAP → LSTM)
-    feature selection mRMR + Stability Selection inside CV here
+    feature selection MI univariate (with delta anchoring) inside CV here
     ↓
 Step 4 — Graph Construction + Temporal GNN
     GraphConfig uses features selected in Step 3
@@ -175,18 +175,15 @@ Step 8 — Paper (bioRxiv preprint)
 6. Metrics: macro F1, MCC, AUROC per class, PR-AUC per class — NEVER accuracy
    PR-AUC is primary for minority classes (Response 13%, Stable 11%) under heavy imbalance
 7. n_effective = 231 (DeepBraTumIA, LUMIERE v202211) — both t AND t+1 must have complete features
-8. Feature selection: mRMR + Stability Selection on radiomic-only subset
+8. Feature selection: MI univariate (production) on radiomic-only subset
    - Executed inside CV only — never on full dataset
-   - Formula: max I(xi; y) - (1/|S|) * sum I(xi; xj∈S)
-   - MI estimation: Kraskov estimator (continuous variables, small n)
-   - mRMR applied ONLY to radiomic features (not delta, not temporal)
-     Rationale: delta bootstrap stability is unreliable on mean sequence
-     length 3.6 timepoints — Kraskov MI estimates are dominated by
-     inter-scan variability rather than biological signal.
-   - Delta features handled via anchoring (label-free, no leakage):
-     anchored_delta = {delta_f : f in selected_radiomic AND variance > 1e-6}
-     Biological rationale: if a radiomic feature is stable, its rate of
-     change is biologically plausible as a temporal signal.
+   - Primary selector: `sklearn.feature_selection.mutual_info_classif` (rank-based top percentile)
+     chosen after diagnosing mRMR rank instability on LUMIERE (Spearman ρ=0.226 on n≈93
+     per diagnostic replicate). mRMR remains as a reference path only.
+   - **Feature pairing constraint (delta anchoring)** (label-free, no leakage):
+     include `delta_f` **only if** the corresponding base feature `f` is selected.
+     This prevents exploding the delta space (1284 deltas) on mean sequence length ~3.6.
+     Implemented as: anchored_delta = {delta_f : f ∈ selected_radiomic AND delta_f passes variance}.
    - Feature set per model:
      LR: selected_radiomic only (cross-sectional, excludes nadir features)
      LightGBM/LSTM/GNN: selected_radiomic + temporal (3) + anchored_delta
@@ -225,7 +222,7 @@ Step 8 — Paper (bioRxiv preprint)
 ---
 
 ## Feature selection cache (operational note)
-Feature selection is expensive (mRMR + Stability Selection). A cached wrapper exists:
+Feature selection is expensive (especially the reference mRMR+stability path). A cached wrapper exists:
 `src/training/training_utils.py::select_features_fold_anchored_cached`.
 
 - Cache location: `data/processed/feature_selection_cache/`

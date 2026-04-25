@@ -98,6 +98,7 @@ class AnchoredFoldSelectionResult:
     n_delta_anchored: int
     fast_mode: bool
     rank_consistency_rho: float | None = None   # Spearman ρ from probe run
+    selection_hash: str = ""                   # md5[:8] of sorted(selected_radiomic)
     method: str = "mrmr"
 
 
@@ -401,6 +402,12 @@ def select_features_fold_anchored_mrmr(
         f"  [mRMR fold={fold}] radiomic: {len(radiomic_names)} → {len(stable_radiomic)} selected"
     )
 
+    import hashlib as _hashlib
+    selection_hash = _hashlib.md5(
+        str(sorted(stable_radiomic)).encode()
+    ).hexdigest()[:8]
+    logger.info(f"  [mRMR fold={fold}] selection_hash={selection_hash}")
+
     # Step 3 — anchor delta features
     anchored_delta = [
         f"delta_{f}" for f in stable_radiomic
@@ -431,6 +438,7 @@ def select_features_fold_anchored_mrmr(
         n_delta_anchored=len(anchored_delta),
         fast_mode=fast,
         rank_consistency_rho=rank_consistency_rho,
+        selection_hash=selection_hash,
     )
 
 

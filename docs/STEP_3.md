@@ -86,7 +86,7 @@ non-linearity → temporal modelling → graph structure.
 ```
 T3.0  CV infrastructure + metrics
   ↓
-T3.1  Feature selection (mRMR + Stability Selection) inside CV
+T3.1  Feature selection (MI univariate, with delta anchoring) inside CV
   ↓
 T3.2  Baseline 1: Logistic Regression
   ↓
@@ -170,71 +170,49 @@ selection = select_features_fold_anchored_cached(
 selected features (majority vote across folds) — consumed by Step 4
 `GraphConfig.node_feature_cols`. Never read by the baselines.
 
-**Algorithm**: mRMR
-```
-max I(xi; y) - (1/|S|) * sum I(xi; xj ∈ S)
-```
-MI estimator: Kraskov k-NN via `npeet` library (correct for continuous variables, small n).
-`sklearn.feature_selection.mutual_info_classif` is not used — it applies a different
-discretisation-based estimator inappropriate for the radiomic feature distribution.
+**Algorithm (production)**: univariate Mutual Information (MI), rank-based top percentile.
 
-**Stability Selection**:
-- B=100 replicates on the training fold using `StratifiedShuffleSplit` (50% subsample, stratified by class)
-- This departs from classical bootstrap (sampling with replacement, uniform):
-  `StratifiedShuffleSplit` preserves the 76/11/13 class distribution per replicate,
-  preventing minority-class collapse on small folds. **Declare this deviation in Methods.**
-- Feature stability = fraction of replicates in which feature is selected
-- Keep features with stability ≥ \( \tau \)
+- **Selector**: `sklearn.feature_selection.mutual_info_classif` on the radiomic-only subset.
+- **Why not mRMR here**: diagnostic probing on LUMIERE showed low ranking consistency
+  (Spearman ρ=0.226 on n≈93 per diagnostic replicate), so mRMR+stability would inject
+  selection noise. mRMR remains available as a **reference path** only.
 
-**Stability threshold \( \tau \)**:
-- The literature “ideal” \( \tau=0.7 \) is often unstable on small folds.
-- On LUMIERE (n≈185 per fold), calibrate \( \tau \) empirically by monitoring
-  `n_radiomic_selected`, `n_delta_anchored`, and downstream CV metrics.
-- **Current code default**: `STABILITY_THRESHOLD = 0.4` in `src/training/feature_selector.py`.
-  More conservative (often reasonable) settings are \( \tau=0.5 \) or \( \tau=0.6 \).
-- **Warning**: if `n_radiomic_candidates < 20` after variance filter on a fold, log
-  a `WARNING: low radiomic pool after variance filter` and skip mRMR for that fold.
-
-**Cross-fold stability** (computed in T3.3 aggregation only):
-- Stability score (fold) = fraction of folds in which feature passes bootstrap threshold
-- Features stable in both dimensions are the primary biological interpretation basis
+**Cross-fold stability / aggregation** (computed in T3.3 only):
+- `selected_features.yaml` is still a majority-vote aggregation across folds (≥3/5)
+  for reproducible downstream use (Step 4).
 
 **Aggregation into selected_features.yaml** (T3.3 only):
 - Majority vote: feature included if bootstrap-stable in ≥ 3/5 folds
 - More robust than strict intersection on n=231
 
 **Runtime notes**:
-- Total MI calls: ~625k across 5 folds (50 mRMR steps × 25 avg redundancy × 100 bootstrap × 5 folds).
-  This is the most expensive part of Step 3. Parallelised via joblib (n_jobs from configs/random_state.yaml).
-  Expected runtime: 3–6h on CPU (i7-7700HQ) with joblib + MI cache. Run overnight.
-  On laptops set n_jobs=6 in random_state.yaml to reduce thermal load (~2 thread headroom for OS).
-- tau is calibrated empirically on this dataset (n≈185 per fold, radiomic-only pool).
-  Document the chosen tau and calibration rationale in the paper Methods section.
-  Monitor n_radiomic_selected and n_delta_anchored in MLflow after each run.
+- MI univariate is substantially cheaper than mRMR+stability. If switching methods,
+  delete `data/processed/feature_selection_cache/` to avoid stale cache hits.
 
 **Pre-filtering (variance threshold)**:
 - Near-constant features (variance < 1e-6 on normalised train fold) are removed
-  before mRMR. Label-free — uses only X, no target information, safe inside CV.
-  Reduces MI call count and improves stability of Kraskov estimator on small n.
+  before MI scoring. Label-free — uses only X, no target information, safe inside CV.
+  Improves robustness on small n and reduces computation.
 
 **Feature selection flow (fold-by-fold, inside CV)**:
 ```
 1. Variance threshold on full set (label-free) → remove near-constant features
-2. mRMR + Stability Selection on radiomic-only subset → selected_radiomic
-3. Anchored delta = {delta_f : f in selected_radiomic AND delta_f passes variance}
-4. full_feature_set = stable_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
+2. Univariate MI on radiomic-only subset → selected_radiomic (top percentile, rank-based)
+3. **Feature pairing constraint (delta anchoring)**:
+   anchored_delta = {delta_f : f ∈ selected_radiomic AND delta_f passes variance}
+4. full_feature_set = selected_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
 ```
 Biological motivation for anchoring: if a radiomic feature is stable and
 informative, its rate of change is biologically plausible. Including all
 1284 delta features would introduce noise given mean sequence length ~3.6.
-Delta features are NOT passed through mRMR — their bootstrap stability is
-unreliable on sequences of mean length 3.6 timepoints.
+Delta features are NOT independently selected — anchoring enforces pairing and
+keeps delta capacity proportional to selected radiomics.
 
 **Execution scope**:
-- mRMR + Stability Selection on **radiomic-only subset** in all models
+- MI univariate on **radiomic-only subset** in all models (production path)
 - LR uses `selected_radiomic` only — pure cross-sectional static baseline
   (no delta, no temporal, no nadir features CE_vs_nadir/weeks_since_nadir)
-- LightGBM/LSTM/GNN use `full_feature_set` = stable_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
+- LightGBM/LSTM/GNN use `full_feature_set` = selected_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
 - Ablation B (temporal only, 3 features) skips mRMR — sentinel result used.
   Guard in `_run_ablation_cv`: `select_features_fold_anchored` called only if `ablation != 'B'`.
   When multiple ablations run together, mRMR runs once per fold and result
@@ -333,7 +311,7 @@ given mean sequence length ~3.6 timepoints — this is an honest scientific resu
 last timepoint excluded per the paired examples schema). Variable-length sequences
 handled via `pack_padded_sequence`.
 
-Input shape: `(batch, seq_len, n_features)` where n_features = features selected inside the LSTM CV loop (Full set D, same mRMR + Stability Selection pattern as LightGBM).
+Input shape: `(batch, seq_len, n_features)` where n_features = features selected inside the LSTM CV loop (Full set D, same MI-univariate + delta-anchoring pattern as LightGBM).
 
 **Architecture (fixed)**:
 ```

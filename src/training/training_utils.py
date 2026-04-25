@@ -155,12 +155,14 @@ def select_features_fold_anchored_cached(
 
     # Build cache key: method + relevant parameters + data fingerprint
     if method == "mi_univariate":
+        fast = kwargs.get("fast", False)
         cache_params = {
             "method": method,
             "fold": fold,
             "percentile": kwargs.get("percentile", cfg.get("percentile", 5.0)),
             "n_neighbors": kwargs.get("n_neighbors", cfg.get("n_neighbors", 5)),
             "seed": kwargs.get("seed", cfg.get("seed", 42)),
+            "fast": fast,
             "variance_threshold": VARIANCE_THRESHOLD,
         }
     else:  # mrmr

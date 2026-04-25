@@ -84,7 +84,6 @@ class MIFoldSelectionResult:
     temporal_cols: list[str]
     full_feature_set: list[str]
     mi_scores: dict[str, float]        # MI score per radiomic candidate (all, not just selected)
-    mi_threshold: float                # MI score of last selected feature (effective cutoff)
     n_radiomic_candidates: int
     n_radiomic_selected: int
     n_delta_anchored: int
@@ -250,7 +249,6 @@ def select_features_fold_mi(
         temporal_cols=temporal,
         full_feature_set=full_feature_set,
         mi_scores=mi_scores,
-        mi_threshold=mi_cutoff,
         n_radiomic_candidates=len(radiomic_names),
         n_radiomic_selected=len(selected_radiomic),
         n_delta_anchored=len(anchored_delta),

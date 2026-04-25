@@ -42,11 +42,43 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import mlflow
-import numpy as np
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except ModuleNotFoundError:
+    matplotlib = None
+    plt = None
+    _HAS_MPL = False
+
+try:
+    import mlflow  # type: ignore
+    _HAS_MLFLOW = True
+except ModuleNotFoundError:
+    _HAS_MLFLOW = False
+
+    class _NoopRun:
+        def __enter__(self):  # noqa: D401
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _MLflowStub:
+        def set_experiment(self, *args, **kwargs):
+            return None
+
+        def start_run(self, *args, **kwargs):
+            return _NoopRun()
+
+        def log_metric(self, *args, **kwargs):
+            return None
+
+        def log_artifact(self, *args, **kwargs):
+            return None
+
+    mlflow = _MLflowStub()  # type: ignore
 import pandas as pd
 import yaml
 from src.models.lgbm_baseline import (
@@ -60,12 +92,9 @@ from src.models.lgbm_baseline import (
 from src.training.cross_validation import CVSplits, build_cv_splits
 from src.training.feature_selector import (
     AnchoredFoldSelectionResult,
-    BOOTSTRAP_REPLICATES,
     BOOTSTRAP_REPLICATES_FAST,
     FoldSelectionResult,
-    MRMR_N_SELECT,
     MRMR_N_SELECT_FAST,
-    STABILITY_THRESHOLD,
     STABILITY_THRESHOLD_FAST,
     aggregate_fold_selections,
 )
@@ -158,8 +187,8 @@ def _log_aggregated_metrics(agg: AggregatedMetrics, ablation: AblationType) -> N
 # SHAP I/O
 # ---------------------------------------------------------------------------
 
-def _save_shap_artifacts(shap_result: SHAPResult, output_dir: Path) -> tuple[Path, Path]:
-    """Save SHAP top-20 CSV and bar chart PNG."""
+def _save_shap_artifacts(shap_result: SHAPResult, output_dir: Path) -> tuple[Path, Path | None]:
+    """Save SHAP top-20 CSV and bar chart PNG (if matplotlib available)."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     paired = sorted(
@@ -171,6 +200,10 @@ def _save_shap_artifacts(shap_result: SHAPResult, output_dir: Path) -> tuple[Pat
     top20_df = pd.DataFrame(paired, columns=["feature", "mean_abs_shap"])
     csv_path = output_dir / "shap_top20.csv"
     top20_df.to_csv(csv_path, index=False)
+
+    if not _HAS_MPL:
+        # Keep pipeline runnable in minimal environments; SHAP CSV is sufficient for smoke tests.
+        return csv_path, None
 
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.barh([p[0] for p in reversed(paired)], [p[1] for p in reversed(paired)], color="steelblue")
@@ -238,6 +271,7 @@ def _run_ablation_cv(
     fold_results: list[LGBMFoldResult] = []
     fold_metrics_list: list[FoldMetrics] = []
     fold_selection_results: list[FoldSelectionResult] = []
+    fold_feature_selection_meta: list[dict] = []
 
     for fold_split in cv_splits.folds:
         X_train_df = df.iloc[fold_split.train_idx]
@@ -263,15 +297,36 @@ def _run_ablation_cv(
                 n_jobs=n_jobs,
                 verbose=verbose,
             )
+            # Traceability: print selection summary even when loaded from cache.
+            # Use getattr to remain compatible with older cached pickles.
+            selection_hash = getattr(selection, "selection_hash", "")
+            print(
+                f"  [selection] fold={fold_split.fold} "
+                f"n_radiomic_selected={selection.n_radiomic_selected} | "
+                f"n_delta_anchored={selection.n_delta_anchored} | "
+                f"selection_hash={selection_hash}"
+            )
             if ablation == "D":
+                fold_feature_selection_meta.append({
+                    "fold": int(fold_split.fold),
+                    "method": getattr(selection, "method", ""),
+                    "selection_hash": selection_hash,
+                    "n_radiomic_candidates": int(selection.n_radiomic_candidates),
+                    "n_radiomic_selected": int(selection.n_radiomic_selected),
+                    "n_delta_anchored": int(selection.n_delta_anchored),
+                })
+                # A
+                stability = getattr(selection, "bootstrap_stability", None) or {
+                    f: 1.0 for f in selection.selected_radiomic
+                }
                 # Store radiomic-only FoldSelectionResult for YAML aggregation
                 fold_selection_results.append(FoldSelectionResult(
                     fold=fold_split.fold,
                     selected_features=selection.selected_radiomic,
-                    bootstrap_stability=selection.bootstrap_stability,
+                    bootstrap_stability=stability,
                     n_candidates=selection.n_radiomic_candidates,
                     n_selected=selection.n_radiomic_selected,
-                    fast_mode=selection.fast_mode,
+                    fast_mode=getattr(selection, "fast_mode", False),
                 ))
         else:
             # Ablation B: no feature selection needed — sentinel
@@ -320,6 +375,15 @@ def _run_ablation_cv(
         fold_metrics_list.append(result.metrics)
 
     aggregated = aggregate_cv_results(fold_metrics_list)
+    # Attach selection metadata to results (ablation D only) without changing model dataclasses.
+    # This is consumed by the outer reporter to persist selection_hash into JSON artifacts.
+    if ablation == "D" and fold_feature_selection_meta:
+        for r in fold_results:
+            # store as an attribute for later serialization (safe: dataclass -> dict via asdict ignores it)
+            setattr(r, "_feature_selection_meta", None)
+        # we return meta via a private attribute on the list object to avoid signature churn
+        setattr(fold_selection_results, "_feature_selection_meta", fold_feature_selection_meta)
+
     return fold_results, aggregated, fold_selection_results
 
 
@@ -356,7 +420,6 @@ def _run_shap(
     feature_cols: list[str] = best_result.feature_cols
     X_te = pd.DataFrame(X_test_scaled, columns=all_feature_cols)[feature_cols].values
 
-    print(f"feature_cols in best_result: {best_result.feature_cols}")
     shap_result = compute_shap(
         model=best_result.model,
         X_test=X_te,
@@ -366,7 +429,8 @@ def _run_shap(
 
     csv_path, png_path = _save_shap_artifacts(shap_result, INTERP_DIR)
     mlflow.log_artifact(str(csv_path))
-    mlflow.log_artifact(str(png_path))
+    if png_path is not None:
+        mlflow.log_artifact(str(png_path))
 
     if shap_result.interval_weeks_rank is not None:
         mlflow.log_metric("D_interval_weeks_shap_rank", shap_result.interval_weeks_rank)
@@ -375,7 +439,10 @@ def _run_shap(
                 f"  ⚠️  interval_weeks SHAP rank = {shap_result.interval_weeks_rank} ≤ 5 "
                 "— temporal leakage must be declared in paper."
             )
-    print(f"  SHAP saved → {csv_path}, {png_path}")
+    if png_path is not None:
+        print(f"  SHAP saved → {csv_path}, {png_path}")
+    else:
+        print(f"  SHAP saved → {csv_path} (PNG skipped: matplotlib not installed)")
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +558,11 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
                 "fold_results": [_fold_result_to_dict(r) for r in fold_results],
                 "aggregated": asdict(aggregated),
             }
+            if ablation == "D":
+                # Persist feature selection summary (incl. selection_hash) into JSON artifacts.
+                fold_fs_meta = getattr(fold_sel, "_feature_selection_meta", [])
+                if fold_fs_meta:
+                    report["fold_feature_selection"] = fold_fs_meta
             report_path = OUTPUT_DIR / f"lgbm_{ablation}_results.json"
             with open(report_path, "w") as f:
                 json.dump(report, f, indent=2)
