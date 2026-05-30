@@ -448,14 +448,22 @@ LightGBM D (full selected-feature baseline) — beating LR alone is not sufficie
 
 ## Definition of Done
 
-- [ ] T3.0: CV splits verified (no patient leakage), metrics.py tested on synthetic data
-- [ ] T3.1: `feature_selector.py` verified (pure functions, no standalone entry point)
-- [ ] T3.2: LR CV results logged to MLflow, metrics aggregate computed
-- [ ] T3.3: LightGBM ablations A/B/C/D on MLflow; SHAP beeswarm + top-20 table saved; decision rules documented
-- [ ] T3.3: `selected_features.yaml` committed (produced by LightGBM D only), stability scores logged, fold-level JSONs saved
-- [ ] T3.4: LSTM CV results logged to MLflow; `pack_padded_sequence` tested on variable-length inputs
-- [ ] T3.5: validator exits 0; **Current Results** section updated (or equivalent JSON/paper table from baselines)
-- [ ] Normalization verified: scaler fit only on train fold (never on full dataset)
-- [ ] All random seeds fixed and logged (seed=42 from `configs/random_state.yaml`)
-- [ ] Temporal feature SHAP ranks reported; `interval_weeks` leakage flag set if rank ≤ 5
-- [ ] PR-AUC reported per class for all models
+- [x] T3.0: CV infrastructure implemented with `StratifiedGroupKFold`, patient grouping, and no-patient-overlap assertions
+- [x] T3.0: Metric aggregation implemented for macro F1, MCC, AUROC per class, and PR-AUC per class; accuracy excluded
+- [x] T3.1: Feature selector routed through `feature_selector.py` with MI-univariate production path and mRMR reference path
+- [x] T3.1: Feature selection runs inside each CV fold only, after train-fold scaling; cached wrapper uses data + method-specific parameter fingerprints
+- [x] T3.1: `selected_features.yaml` aggregation documented as cross-fold majority vote (selected in ≥3/5 folds), not MI bootstrap stability
+- [x] T3.2: Logistic Regression CV completed; aggregate results saved to `data/processed/baselines/lr_results.json`
+- [x] T3.3: LightGBM ablations A/B/C/D completed; fold/aggregate JSONs saved under `data/processed/baselines/`
+- [x] T3.3: LightGBM D produced `configs/selected_features.yaml` and `data/processed/baselines/fold_stability.json`
+- [x] T3.3: SHAP artifacts saved to `data/processed/interpretability/shap_top20.csv` and `shap_beeswarm.png`
+- [x] T3.3: Decision rules documented: B below macro-F1 leakage threshold (0.3725 vs 0.38), `interval_weeks` outside SHAP top 20, temporal/history confounding still discussed
+- [x] T3.4: LSTM CV completed; aggregate results saved to `data/processed/baselines/lstm_results.json`
+- [x] T3.5: **Current Results** section updated from the 2026-05-02 baseline artifacts
+- [x] Normalization pattern uses train-fold scaler fit only (`StandardScaler.fit_transform` on train, `transform` on test)
+- [x] Random seed centralized through `configs/random_state.yaml` (seed=42)
+- [x] PR-AUC reported per class for all baseline models in the Step 3 table/artifacts
+- [x] Step 4 framing updated: compare GNN against LightGBM A, B, and D; beating LR alone is insufficient
+- [ ] Baselines validator script/report is not present yet (`src/validation/baselines_validator.py` still to implement if required)
+- [ ] Formal unit-test evidence for metrics/CV/LSTM packing is not recorded in this document
+- [ ] Commit Step 3 documentation and artifact updates once reviewed

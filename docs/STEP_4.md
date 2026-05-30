@@ -4,11 +4,12 @@
 Build patient graph sequences from the paired dataset and train the temporal GNN.
 
 **Input**:
-- `data/processed/dataset_paired.parquet`
+- `data/processed/preprocessing/dataset_engineered.parquet`
 - `configs/selected_features.yaml` (from Step 3)
 
 **Output**:
-- `data/processed/graphs/{patient_id}.pt`
+- `data/processed/graphs/3node/{patient_id}.pt`
+- `data/processed/gnn/gnn_{ablation}_{topology}_results.json`
 - MLflow experiment `gnn/`
 
 ---
@@ -25,14 +26,17 @@ Necrosis ←→ Contrast-enhancing
          Edema
 ```
 
-Node feature distinctiveness is guaranteed by construction: each node uses only
-its own label-prefixed columns (NC_*, CE_*, ED_*), so GATv2Conv sees different
-initial representations even before message passing.
+Node feature ownership is prefix-based: selected `NC_*`, `CE_*`, and `ED_*`
+radiomic/delta columns are assigned only to their corresponding node, with
+shorter node rows zero-padded to a common width for PyG batching. In the current
+Step 3 selected feature set, ED has no majority-vote radiomic features, so the
+ED node is retained topologically but carries only scalar context plus padding.
+This must be declared when interpreting any 3-node GNN result.
 
 ### Node features per node
 ```
-[selected radiomic features (~20-30, from selected_features.yaml)
- delta features (Δlog(f) / interval_weeks)
+[selected radiomic features from selected_features.yaml, prefix-filtered per node
+ anchored delta features (delta_f for each selected radiomic f, if present)
  is_baseline_scan
  time_from_diagnosis_weeks
  scan_index]
@@ -49,11 +53,27 @@ initial representations even before message passing.
 y = target_encoded (RANO class at t+1)
 ```
 
-**File**: `src/graphs/graphs_builder.py`
+**File**: `src/graphs/graph_builder.py`
 **Key classes**: `GraphConfig`, `PatientGraphSequence`
 **Validation**: `graphs_validator.py — asserts` — asserts shape invariants on every graph
 
-Also build HD-GLIO-AUTO 2-node graphs for ablation (same architecture, 2 nodes).
+HD-GLIO-AUTO 2-node graphs remain a deferred A6 ablation. The current engineered
+parquet is DeepBraTumIA-only and has no `NE_*` columns; the builder now fails
+explicitly rather than creating a misleading scalar-only NE node.
+
+**Current dry-run status (2026-05-30)**:
+- 3-node graph builder dry-run passes on DeepBraTumIA: 231 graphs, 64 patients,
+  sequence length min=1, max=14, mean=3.6, node feature dim=67, edge dim=2.
+- 3-node graphs have been saved under `data/processed/graphs/3node/` and validated
+  by `src.validation.graphs_validator` with zero FAIL results.
+- Current node widths before padding: NC=19, CE=67, ED=3. ED has no selected
+  radiomic/delta features in the current `selected_features.yaml`.
+- 2-node topology is intentionally blocked until an HD-GLIO-AUTO engineered parquet exists.
+
+Training note: `run_gnn.py` re-collates node features from fold-normalised
+`dataset_engineered.parquet` using the fold-specific MI selection, and reuses the
+saved `.pt` files for graph topology, edge attributes, labels, and sequence metadata.
+This preserves the Step 3 rule that feature selection and scaling live inside CV.
 
 ---
 
@@ -110,20 +130,50 @@ patience: 20
 
 A2 = LSTM from Step 3 — already computed.
 A5 = temporal-only ablation B from Step 3 — already computed.
+A3 is currently blocked until a no-delta graph/feature-collation path is added.
+A6 is currently blocked until HD-GLIO-AUTO preprocessing/feature engineering produces
+an engineered parquet with `NE_*` columns.
+
+---
+
+## Current Implementation Status (2026-05-30)
+
+Implemented:
+- `src/graphs/graph_builder.py` with 3-node graph construction and fail-fast structural validation
+- `src/validation/graphs_validator.py`
+- `src/models/gnn.py` (`TumorGraphNet`, GATv2Conv)
+- `src/models/temporal_attention.py` (continuous-time encoding + temporal attention)
+- `src/models/tumor_gnn.py` (`TumorTemporalGNN`)
+- `src/training/run_gnn.py` with CV scaffold, fold-wise feature selection reuse,
+  class-weighted loss, AdamW, ReduceLROnPlateau, early stopping, and MLflow logging
+- `configs/gnn.yaml`
+- Fast GNN smoke run completed for `full` / `3node`:
+  `data/processed/gnn/gnn_full_3node_results.json`
+
+Known constraints:
+- Full hyperparameter grid search is not implemented yet; `run_gnn.py` currently uses
+  the first value from each list in `configs/gnn.yaml`.
+- Training uses whole-fold patient tensors rather than mini-batches. This is acceptable
+  for n=231 as a first correctness pass, but `batch_size` is not yet operational.
+- A3 and A6 are intentionally blocked rather than silently producing invalid ablations.
+- GNN must be compared against LightGBM A, B, and D from Step 3; beating LR alone is insufficient.
 
 ---
 
 ## Definition of Done
 
-- [ ] `graphs_builder.py` implemented and unit tested
-- [ ] `graphs_validator.py` passing all structural assertions
-- [ ] 3-node graphs built and saved for all 64 patients
-- [ ] 2-node graphs built for HD-GLIO-AUTO (ablation A6)
-- [ ] `graphs_validator.py — asserts` passing all structural assertions
-- [ ] TumorTemporalGNN implemented and unit tested
-- [ ] CV training loop with early stopping and MLflow logging
-- [ ] Class-weighted loss implemented
-- [ ] Full ablation study A1–A6 run and logged
+- [x] `src/graphs/graph_builder.py` implemented for 3-node DeepBraTumIA graphs
+- [x] 3-node graph builder dry-run passes structural assertions on 231 graphs / 64 patients
+- [x] `src/validation/graphs_validator.py` implemented
+- [x] `TumorGraphNet`, `TemporalAttentionEncoder`, and `TumorTemporalGNN` implemented
+- [x] CV training runner scaffold implemented in `src/training/run_gnn.py`
+- [x] Class-weighted loss, AdamW, ReduceLROnPlateau, early stopping, and random seeds wired
+- [x] `configs/gnn.yaml` present
+- [x] 3-node graphs saved to `data/processed/graphs/3node/{patient_id}.pt`
+- [x] `graphs_validator.py` run successfully on saved 3-node graph artifacts
+- [x] GNN fast smoke run completed and JSON report saved
+- [ ] Full 5-fold GNN run completed for full, A1, and A4
+- [ ] A3 no-delta ablation implemented and run
+- [ ] HD-GLIO-AUTO 2-node engineered parquet produced; A6 graph builder/run implemented and validated
 - [ ] Comparison table from Step 3 completed with GNN results
-- [ ] Random seeds fixed and logged
-- [ ] `configs/gnn.yaml` committed
+- [ ] Formal unit tests added for graph builder, temporal padding/collation, and model forward pass

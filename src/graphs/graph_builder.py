@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -51,7 +52,10 @@ import yaml
 from torch import Tensor
 from torch_geometric.data import Data
 
-from src.utils.lumiere_io import LABEL_ENCODING, RADIOMIC_PREFIX, print_section
+from src.utils.lumiere_io import RADIOMIC_PREFIX, print_section
+
+if __name__ == "__main__":
+    sys.modules["src.graphs.graph_builder"] = sys.modules[__name__]
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -173,6 +177,10 @@ class PatientGraphSequence:
     label_sequence: list[int]
 
 
+# Keep torch.save/torch.load stable when this file is executed via `python -m`.
+PatientGraphSequence.__module__ = "src.graphs.graph_builder"
+
+
 # ---------------------------------------------------------------------------
 # Config factory — loads selected_features.yaml and builds GraphConfig
 # ---------------------------------------------------------------------------
@@ -262,6 +270,13 @@ def _resolve_node_feature_cols(
     Raises:
         ValueError: if any configured column is absent from df.
     """
+    if config.topology == "2node" and not any(c.startswith("NE_") for c in df.columns):
+        raise ValueError(
+            "2node topology requires an HD-GLIO-AUTO engineered parquet with NE_* "
+            "columns. The current parquet has no NE_* features, so A6 is deferred "
+            "rather than building a misleading scalar-only NE node."
+        )
+
     if config.node_feature_cols:
         missing = [
             col
@@ -581,6 +596,14 @@ def main(
     print(f"Loaded: {df.shape[0]} rows × {df.shape[1]} columns")
     print(f"Patients: {df['Patient'].nunique()}")
 
+    if topology == "2node" and not any(c.startswith("NE_") for c in df.columns):
+        print(
+            "ERROR: 2node topology requires an HD-GLIO-AUTO engineered parquet "
+            "with NE_* columns. The current parquet has no NE_* features, so A6 "
+            "is deferred rather than building a misleading scalar-only NE node."
+        )
+        sys.exit(1)
+
     config = load_graph_config(SELECTED_FEATURES_PATH, topology=topology)
 
     # Resolve column lists once — shared across all patients (DRY, avoids O(n²) scans)
@@ -591,9 +614,15 @@ def main(
     n_radiomic = sum(len(v) for v in node_feature_cols.values())
     n_delta = sum(len(v) for v in delta_feature_cols.values())
     n_scalar = len(config.scalar_features)
+    per_node_widths = [
+        len(node_feature_cols.get(prefix, []))
+        + len(delta_feature_cols.get(prefix, []))
+        + n_scalar
+        for prefix in config.node_order
+    ]
     print(
-        f"Node features: {n_radiomic} radiomic + {n_delta} delta "
-        f"+ {n_scalar} scalar = {n_radiomic + n_delta + n_scalar} per node"
+        f"Node feature slots before padding: {n_radiomic} radiomic + {n_delta} delta "
+        f"+ {n_scalar} scalar per node context; padded width={max(per_node_widths)}"
     )
 
     patients = sorted(df["Patient"].unique())
@@ -639,8 +668,9 @@ def main(
             "n_patients": len(sequences),
             "n_graphs": len(all_graphs),
             "node_feat_dim": node_feat_dim,
-            "n_radiomic_per_node": n_radiomic // max(len(config.node_order), 1),
-            "n_delta_per_node": n_delta // max(len(config.node_order), 1),
+            "n_radiomic_total": n_radiomic,
+            "n_delta_total": n_delta,
+            "node_widths_before_padding": dict(zip(config.node_order, per_node_widths)),
             "n_scalar": n_scalar,
             "n_edges": config.n_edges,
             "seq_len_min": int(min(seq_lengths)),

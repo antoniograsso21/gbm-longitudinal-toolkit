@@ -32,16 +32,17 @@ Output artifacts:
     MLflow experiment: gnn/
 
 Usage:
-    uv run python src/training/run_gnn.py
-    uv run python src/training/run_gnn.py --ablation A1
-    uv run python src/training/run_gnn.py --fast
-    uv run python src/training/run_gnn.py --topology 2node --ablation A6
+    uv run python -m src.training.run_gnn
+    uv run python -m src.training.run_gnn --ablation A1
+    uv run python -m src.training.run_gnn --fast
+    uv run python -m src.training.run_gnn --topology 2node --ablation A6
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -83,6 +84,23 @@ MLFLOW_EXPERIMENT = "gnn"
 
 AblationType = Literal["full", "A1", "A3", "A4", "A6"]
 ABLATIONS_ALL: list[AblationType] = ["full", "A1", "A4"]  # A6 via --topology 2node
+
+INTERVAL_COL = "interval_weeks"
+
+
+def _is_node_specific_feature(col: str, prefix: str) -> bool:
+    """Return True for selected radiomic or anchored-delta features for one node."""
+    return (
+        col.startswith(f"{prefix}_") and "_original_" in col
+    ) or (
+        col.startswith(f"delta_{prefix}_") and "_original_" in col
+    )
+
+
+def _first_grid_value(cfg: dict, key: str, default):
+    """Return the first value from a scalar-or-list YAML config entry."""
+    value = cfg.get(key, default)
+    return value[0] if isinstance(value, list) else value
 
 
 # ---------------------------------------------------------------------------
@@ -187,26 +205,44 @@ def collate_patient_sequences(
     edge_dim = sample_graph.edge_attr.shape[1]
     edge_index = sample_graph.edge_index.to(device)
 
-    # Identify node-specific and scalar feature indices in feature_cols
+    # Identify node-specific and global context feature indices in feature_cols.
+    # X_scaled columns are aligned to all_feature_cols, not feature_cols, so keep
+    # both the selected feature names and their absolute matrix indices.
     # Node prefixes: NC_, CE_, ED_ (or NE_, CE_ for 2node)
     topology = sequences[0].topology
     node_prefixes = ["NC", "CE", "ED"] if topology == "3node" else ["NE", "CE"]
+    all_feature_index = {c: i for i, c in enumerate(all_feature_cols)}
+    missing = [c for c in feature_cols if c not in all_feature_index]
+    if missing:
+        raise ValueError(
+            f"{len(missing)} selected GNN features are absent from all_feature_cols: "
+            f"{missing[:5]}"
+        )
 
-    # Build per-node column index maps within feature_cols
-    col_set = set(feature_cols)
+    # Build per-node selected feature maps. Delta-derived global features such as
+    # delta_CE_NC_ratio are not node-specific even though they start with delta_CE.
     node_col_indices: dict[str, list[int]] = {}
     for prefix in node_prefixes:
         node_col_indices[prefix] = [
-            i for i, c in enumerate(feature_cols)
-            if c.startswith(f"{prefix}_") and c in col_set
+            all_feature_index[c] for c in feature_cols
+            if _is_node_specific_feature(c, prefix)
         ]
 
-    # Scalar features: cols in feature_cols that don't belong to any node prefix
-    all_node_cols: set[int] = set(idx for idxs in node_col_indices.values() for idx in idxs)
-    scalar_indices = [i for i in range(len(feature_cols)) if i not in all_node_cols]
+    all_node_feature_names: set[str] = {
+        c for prefix in node_prefixes for c in feature_cols
+        if _is_node_specific_feature(c, prefix)
+    }
+    global_context_indices = [
+        all_feature_index[c]
+        for c in feature_cols
+        if c not in all_node_feature_names and c != INTERVAL_COL
+    ]
 
-    # n_node_features: per-node radiomic + shared scalar
-    n_per_node = max(len(v) for v in node_col_indices.values()) + len(scalar_indices)
+    # n_node_features: per-node radiomic/delta + shared global context.
+    # Shorter node rows are zero-padded, matching graph_builder.py.
+    n_per_node = max(len(v) for v in node_col_indices.values()) + len(global_context_indices)
+    if n_per_node <= 0:
+        raise ValueError("GNN collation produced zero node features.")
 
     max_t = max(seq.n_timepoints for seq in sequences)
     batch_size = len(sequences)
@@ -233,15 +269,13 @@ def collate_patient_sequences(
 
             # Build node features from selected columns
             for node_i, prefix in enumerate(node_prefixes):
-                node_vals = feat_row[[feature_cols.index(c)
-                                      for c in feature_cols
-                                      if c.startswith(f"{prefix}_") and c in col_set]]
-                scalar_vals = feat_row[scalar_indices]
+                node_vals = feat_row[node_col_indices[prefix]]
+                global_vals = feat_row[global_context_indices]
                 x_seq[b, t, node_i, :len(node_vals)] = torch.tensor(
                     node_vals, dtype=torch.float, device=device
                 )
-                x_seq[b, t, node_i, len(node_vals):len(node_vals) + len(scalar_vals)] = (
-                    torch.tensor(scalar_vals, dtype=torch.float, device=device)
+                x_seq[b, t, node_i, len(node_vals):len(node_vals) + len(global_vals)] = (
+                    torch.tensor(global_vals, dtype=torch.float, device=device)
                 )
 
             edge_attr_seq[b, t] = graph.edge_attr.to(device)
@@ -315,7 +349,11 @@ def _train_fold(
     class_weights = _compute_class_weights(y_train_np).to(device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    optimiser = torch.optim.AdamW(model.parameters(), lr=gnn_cfg.learning_rate if hasattr(gnn_cfg, "learning_rate") else 1e-3)
+    optimiser = torch.optim.AdamW(
+        model.parameters(),
+        lr=gnn_cfg.learning_rate,
+        weight_decay=gnn_cfg.weight_decay,
+    )
     scheduler = ReduceLROnPlateau(optimiser, mode="min", patience=patience // 4, factor=0.5)
 
     best_val_loss = float("inf")
@@ -330,7 +368,7 @@ def _train_fold(
         logits = model(x_seq, edge_index, edge_attr_seq, intervals, seq_lengths)
         loss = criterion(logits, labels)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gnn_cfg.grad_clip_norm)
         optimiser.step()
 
         # Validation
@@ -381,7 +419,7 @@ def _train_fold(
         n_features=train_batch[0].shape[-1],
         best_hidden=gnn_cfg.hidden,
         best_heads=gnn_cfg.heads,
-        best_lr=getattr(gnn_cfg, "learning_rate", 1e-3),
+        best_lr=gnn_cfg.learning_rate,
         n_epochs_trained=n_epochs_trained,
     )
 
@@ -391,14 +429,30 @@ def _train_fold(
 # ---------------------------------------------------------------------------
 def _log_fold_metrics(fm: FoldMetrics, ablation: str) -> None:
     p = f"{ablation}_fold_{fm.fold}"
-    mlflow.log_metric(f"{p}_macro_f1",          fm.macro_f1)
-    mlflow.log_metric(f"{p}_mcc",               fm.mcc)
-    mlflow.log_metric(f"{p}_auroc_progressive",  fm.auroc_progressive)
-    mlflow.log_metric(f"{p}_auroc_stable",       fm.auroc_stable)
-    mlflow.log_metric(f"{p}_auroc_response",     fm.auroc_response)
-    mlflow.log_metric(f"{p}_prauc_progressive",  fm.prauc_progressive)
-    mlflow.log_metric(f"{p}_prauc_stable",       fm.prauc_stable)
-    mlflow.log_metric(f"{p}_prauc_response",     fm.prauc_response)
+
+    def log_if_finite(name: str, value: float) -> None:
+        if math.isfinite(float(value)):
+            mlflow.log_metric(name, float(value))
+
+    log_if_finite(f"{p}_macro_f1", fm.macro_f1)
+    log_if_finite(f"{p}_mcc", fm.mcc)
+    log_if_finite(f"{p}_auroc_progressive", fm.auroc_progressive)
+    log_if_finite(f"{p}_auroc_stable", fm.auroc_stable)
+    log_if_finite(f"{p}_auroc_response", fm.auroc_response)
+    log_if_finite(f"{p}_prauc_progressive", fm.prauc_progressive)
+    log_if_finite(f"{p}_prauc_stable", fm.prauc_stable)
+    log_if_finite(f"{p}_prauc_response", fm.prauc_response)
+
+
+def _json_safe(obj):
+    """Convert NaN/inf floats to None before writing standards-compliant JSON."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +471,16 @@ def main(
     print_section(f"Step 4 — Temporal GNN (ablation={ablation}, topology={topology})")
     if fast:
         print("  ⚠️  FAST MODE — 2 folds, 10 epochs max. Smoke test only.")
+    if ablation == "A3":
+        raise NotImplementedError(
+            "A3 (no delta features) requires graph/feature collation without anchored "
+            "delta columns. This is intentionally blocked until the no-delta graph "
+            "build path is implemented."
+        )
+    if ablation == "A6" and topology != "2node":
+        raise ValueError("A6 requires --topology 2node.")
+    if topology == "2node" and ablation != "A6":
+        raise ValueError("2node topology is reserved for ablation A6.")
 
     seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
     cfg_raw = _load_gnn_config(GNN_CONFIG_PATH)
@@ -481,7 +545,6 @@ def main(
             X_train_df = df.iloc[fold_split.train_idx]
             X_test_df  = df.iloc[fold_split.test_idx]
             y_train    = y[fold_split.train_idx]
-            y_test     = y[fold_split.test_idx]
 
             # Normalise
             X_train_scaled, X_test_scaled = fit_transform_fold(
@@ -546,9 +609,16 @@ def main(
             # Build GNNConfig (in_channels resolved inside _train_fold)
             gnn_cfg = GNNConfig(
                 in_channels=0,  # placeholder, resolved in collation
-                hidden=cfg_raw.get("hidden", [32])[0],
-                heads=cfg_raw.get("heads", [1])[0],
-                dropout=cfg_raw.get("dropout", [0.2])[0],
+                hidden=_first_grid_value(cfg_raw, "hidden", 32),
+                heads=_first_grid_value(cfg_raw, "heads", 1),
+                n_gnn_layers=cfg_raw.get("n_gnn_layers", 1),
+                n_temporal_heads=cfg_raw.get("n_temporal_heads", 1),
+                dropout=_first_grid_value(cfg_raw, "dropout", 0.2),
+                edge_dim=cfg_raw.get("edge_dim", 2),
+                n_classes=cfg_raw.get("n_classes", 3),
+                learning_rate=_first_grid_value(cfg_raw, "learning_rate", 1e-3),
+                weight_decay=cfg_raw.get("weight_decay", 1e-4),
+                grad_clip_norm=cfg_raw.get("grad_clip_norm", 1.0),
                 **ablation_flags,
             )
 
@@ -603,7 +673,7 @@ def main(
             }
             report_path = OUTPUT_DIR / f"gnn_{ablation}_{topology}_results.json"
             with open(report_path, "w") as f:
-                json.dump(report, f, indent=2)
+                json.dump(_json_safe(report), f, indent=2, allow_nan=False)
             mlflow.log_artifact(str(report_path))
             print(f"\n  Report → {report_path}")
 

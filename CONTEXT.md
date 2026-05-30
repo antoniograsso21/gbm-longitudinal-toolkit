@@ -336,7 +336,7 @@ gbm-longitudinal-toolkit/
 │   ├── validation/             # dataset_validator.py, features_validator.py
 │   │                           # graphs_validator.py
 │   ├── preprocessing/          # dataset_builder.py, features_builder.py
-│   ├── graphs/                 # graphs_builder.py
+│   ├── graphs/                 # graph_builder.py
 │   ├── models/                 # logistic_baseline.py, gbm_baseline.py,
 │   │                           # lstm_baseline.py, gnn.py, temporal_attention.py
 │   ├── training/               # trainer.py, cross_validation.py, metrics.py

@@ -38,7 +38,7 @@ Design notes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -65,6 +65,9 @@ class GNNConfig:
     dropout: float = 0.2        # dropout shared across GNN and temporal encoder
     edge_dim: int = 2           # [volumetric_ratio, interval_weeks]
     n_classes: int = 3          # RANO: Progressive / Stable / Response
+    learning_rate: float = 1e-3
+    weight_decay: float = 1e-4
+    grad_clip_norm: float = 1.0
 
     # Ablation flags
     use_temporal: bool = True       # False → ablation A1 (cross-sectional)
@@ -156,39 +159,22 @@ class TumorTemporalGNN(nn.Module):
         batch_size, max_t, n_nodes, _ = x_seq.shape
         device = x_seq.device
 
-        # Step 1 — GNN encoding per timepoint
-        # Flatten batch × time for efficient parallel GNN processing
-        x_flat = x_seq.reshape(batch_size * max_t, n_nodes, x_seq.shape[-1])
-        ea_flat = edge_attr_seq.reshape(batch_size * max_t, edge_attr_seq.shape[2], edge_attr_seq.shape[3])
-
-        # For each (batch, time) pair: all nodes belong to the same mini-graph.
-        # Build batch assignment: [0,0,0, 1,1,1, ...] for n_nodes=3
-        batch_assign = torch.arange(batch_size * max_t, device=device).repeat_interleave(n_nodes)
-
-        h_flat = self.gnn(
-            x=x_flat.reshape(batch_size * max_t * n_nodes, x_seq.shape[-1]),
-            edge_index=edge_index,
-            edge_attr=ea_flat.reshape(batch_size * max_t * ea_flat.shape[1], edge_attr_seq.shape[-1]),
-            batch=batch_assign,
-        )  # [batch * max_T, d_model]
-
-        # However, edge_index is for a SINGLE graph (n_nodes nodes).
-        # The flat reshape above mixes graphs — we need to process each
-        # (batch, time) graph independently or re-index edge_index.
-        # Correct approach: loop over max_T (small, max ~16 timepoints).
-        # Re-compute with correct per-timepoint processing:
-        h_flat = self._encode_all_timepoints(
+        # Step 1 — GNN encoding per timepoint.
+        # We loop over graphs instead of flattening batch × time because edge_index is
+        # defined for a single tumor graph and would need offsetting for PyG batching.
+        # Sequences are short on LUMIERE, so correctness and readability win here.
+        h_seq = self._encode_all_timepoints(
             x_seq, edge_index, edge_attr_seq, batch_size, max_t, n_nodes, device
         )  # [batch, max_T, d_model]
 
         # Step 2 — temporal attention (or last-timepoint for ablation A1)
         if self.temporal_encoder is not None:
             padding_mask = self._build_padding_mask(seq_lengths, max_t)
-            summary = self.temporal_encoder(h_flat, intervals, padding_mask)
+            summary = self.temporal_encoder(h_seq, intervals, padding_mask)
         else:
             # Ablation A1: use last valid timepoint embedding
             last_idx = (seq_lengths - 1).clamp(min=0)  # [batch]
-            summary = h_flat[torch.arange(batch_size, device=device), last_idx]  # [batch, d_model]
+            summary = h_seq[torch.arange(batch_size, device=device), last_idx]  # [batch, d_model]
 
         # Step 3 — classify
         return self.classifier(summary)  # [batch, n_classes]
