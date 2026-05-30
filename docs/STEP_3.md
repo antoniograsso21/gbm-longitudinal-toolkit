@@ -56,7 +56,7 @@ delta_CE_vs_nadir                  — Δ(CE_vs_nadir) / interval_weeks
 
 **Feature set definitions for ablations (referenced throughout this step):**
 - **Radiomic set**: all 1284 `{NC|CE|ED}_*` columns + 4 cross-compartment + 2 nadir-based (CE_vs_nadir, weeks_since_nadir) + 2 delta-derived = 1292 columns
-  Note: `is_nadir_scan` is a boolean flag — excluded from all feature sets passed to mRMR (Kraskov k-NN requires continuous input).
+  Note: `is_nadir_scan` is a boolean flag — excluded from all feature sets passed to continuous feature selectors.
 - **Temporal set**: `interval_weeks`, `scan_index`, `time_from_diagnosis_weeks` (3 columns)
 - **Delta set**: all 1284 `delta_{NC|CE|ED}_*` columns (excludes delta_CE_NC_ratio and delta_CE_vs_nadir, which are in Radiomic set)
 - **Full set (D)**: Radiomic + Temporal + Delta = 2579 columns (is_nadir_scan excluded — boolean flag)
@@ -160,10 +160,12 @@ selection = select_features_fold_anchored_cached(
 **Caching behavior (important)**:
 - Cache is **not** keyed on fold index alone.
 - Cache filenames encode a fingerprint of the fold’s `(X_train, y_train)` **and** a fingerprint
-  of the selection parameters (fold, B, n_select, tau, k_mi, seed, fast, variance_threshold).
-- Changing `tau` (or any selection hyperparameter) therefore changes the cache key automatically.
-  Delete the cache directory only if you intentionally want to force recomputation despite an
-  apparent cache hit.
+  of the selection method and method-specific parameters:
+  - MI production path: `method`, `fold`, `percentile`, `n_neighbors`, `seed`, `fast`, `variance_threshold`
+  - mRMR reference path: `method`, `fold`, `B`, `n_select`, `tau`, `k_mi`, `seed`, `fast`, `variance_threshold`
+- Changing any configured selector parameter therefore changes the cache key automatically.
+  Delete the cache directory if code changes alter selector behavior without changing the
+  configuration, or if you intentionally want to force recomputation despite an apparent cache hit.
 
 `selected_features.yaml` is produced **only** at the end of `run_lgbm_baseline.py`
 (T3.3, ablation D) via `aggregate_fold_selections()`. It contains the **radiomic-only**
@@ -182,7 +184,8 @@ selected features (majority vote across folds) — consumed by Step 4
   for reproducible downstream use (Step 4).
 
 **Aggregation into selected_features.yaml** (T3.3 only):
-- Majority vote: feature included if bootstrap-stable in ≥ 3/5 folds
+- Majority vote: feature included if selected by the fold-level selector in ≥ 3/5 folds
+  (for MI, present in the radiomic top-percentile selection; for mRMR, stable within fold)
 - More robust than strict intersection on n=231
 
 **Runtime notes**:
@@ -213,9 +216,9 @@ keeps delta capacity proportional to selected radiomics.
 - LR uses `selected_radiomic` only — pure cross-sectional static baseline
   (no delta, no temporal, no nadir features CE_vs_nadir/weeks_since_nadir)
 - LightGBM/LSTM/GNN use `full_feature_set` = selected_radiomic + sorted(temporal) + sorted(nadir) + sorted(anchored_delta) + sorted(delta_derived)
-- Ablation B (temporal only, 3 features) skips mRMR — sentinel result used.
+- Ablation B (temporal only, 3 features) skips feature selection — sentinel result used.
   Guard in `_run_ablation_cv`: `select_features_fold_anchored` called only if `ablation != 'B'`.
-  When multiple ablations run together, mRMR runs once per fold and result
+  When multiple ablations run together, the configured selector runs once per fold and its result
   is shared across A/C/D — B receives an empty AnchoredFoldSelectionResult.
 
 ---
@@ -281,7 +284,7 @@ for `early_stopping_rounds`. This set is not used for metric evaluation.
 | A | Radiomic set (1292 cols) — selected features only |
 | B | Temporal set (3 cols) — no mRMR, default params: n_estimators=100, max_depth=3, learning_rate=0.05 |
 | C | Radiomic + Temporal (1295 cols) — selected features + temporal |
-| D | Full set: Radiomic + Temporal + Delta — mRMR input pool: 2579 cols → model input: selected features only |
+| D | Full set: Radiomic + Temporal + Delta — selector input pool: 2579 cols → model input: selected features only |
 
 Same hyperparameter grid applied to A/C/D for comparability. B uses default params
 (3 features — search is not meaningful).
@@ -294,7 +297,9 @@ Same hyperparameter grid applied to A/C/D for comparability. B uses default para
 
 **SHAP** (mandatory, run on best-fold model for ablation D):
 - Beeswarm plot + top-20 features by mean |SHAP|, grouped by compartment (CE/ED/NC) and type (radiomic/temporal/delta)
-- `interval_weeks` SHAP rank: if ≤ 5, leakage must be declared in paper
+- Temporal feature SHAP ranks must be reported. If `interval_weeks` ranks ≤ 5,
+  declare strong scheduling leakage; if other temporal features rank highly,
+  discuss history-length/disease-time confounding explicitly.
 - Outputs saved to `data/processed/interpretability/shap_top20.csv` and `shap_beeswarm.png`
 
 ---
@@ -409,21 +414,35 @@ Run date: 2026-05-02. Reported as mean ± std across folds.
 
 ### Interpretation (what this implies for Step 4)
 
-- **Temporal leakage is likely present**: LightGBM B (temporal-only) is the strongest baseline
-  on macro F1 and PR-AUC(Response). This must be declared in the paper and treated as the
-  primary confounder.
-- **SHAP confirms temporal dominance in the full model**: in LightGBM D, `interval_weeks` is
-  ranked **5th** by mean |SHAP| (from `data/processed/interpretability/shap_top20.csv`),
-  triggering the Step 3 leakage flag (rank ≤ 5).
-- **Radiomic signal appears weak at this stage**: A and C are close to LR and do not exceed B.
-  Under the Step 3 decision rule, this is consistent with “weak radiomic signal (relative to
-  scheduling effects)”.
+- **Temporal confounding remains relevant but is not the whole signal**: LightGBM B
+  (temporal-only) is close to, but below, the predeclared macro-F1 leakage threshold
+  (0.3725 vs 0.38) and has the strongest PR-AUC(Response), so scheduling/history effects
+  should still be discussed as an important confounder. However, B is not the strongest
+  macro-F1 baseline; LightGBM A (radiomic-only) is higher.
+- **SHAP does not show interval-week dominance in the full model**: in LightGBM D,
+  `interval_weeks` is absent from the top-20 SHAP table. The only temporal feature in
+  `data/processed/interpretability/shap_top20.csv` is `time_from_diagnosis_weeks`
+  at rank 12, after 11 radiomic features.
+- **Dual evidence argues against strong scheduling leakage in the full model**:
+  B is below the predeclared macro-F1 leakage threshold and `interval_weeks` ranks
+  outside the SHAP top 20 in D. Scheduling/history confounding should still be declared,
+  but not framed as the dominant full-model mechanism in this run.
+- **Radiomic signal is present but modest**: LightGBM A is the strongest macro-F1 baseline,
+  and the full-model SHAP top ranks are dominated by CE/NC radiomic features. Adding
+  temporal and delta features does not improve macro F1 over radiomics alone in these runs.
+- **Selected-feature biology is plausible but redundant**: `selected_features.yaml` is
+  CE-heavy, consistent with RANO's contrast-enhancing focus; NC contributes mainly shape
+  and selected texture features; ED is absent from the majority-vote radiomic set.
+  Several CE shape features repeat across CT1/FLAIR/T1/T2 even though shape features are
+  identical across sequences by construction, so report both nominal selected features
+  and unique compartment/family-level patterns in the paper.
 - **Delta anchoring does not materially improve over C** in these runs (D ≈ C).
 - **LSTM does not clearly beat LightGBM**, consistent with the expectation under short mean
   sequence length (~3.6 timepoints). Treat as an honest result.
 
 Implication: Step 4 should be framed as **exploratory** and must be compared directly to
-LightGBM B (temporal-only) and LightGBM D (full) — beating LR is not sufficient if B is higher.
+LightGBM A (best macro-F1 radiomic baseline), LightGBM B (temporal-only confounder), and
+LightGBM D (full selected-feature baseline) — beating LR alone is not sufficient.
 
 ---
 
@@ -438,5 +457,5 @@ LightGBM B (temporal-only) and LightGBM D (full) — beating LR is not sufficien
 - [ ] T3.5: validator exits 0; **Current Results** section updated (or equivalent JSON/paper table from baselines)
 - [ ] Normalization verified: scaler fit only on train fold (never on full dataset)
 - [ ] All random seeds fixed and logged (seed=42 from `configs/random_state.yaml`)
-- [ ] `interval_weeks` SHAP rank reported; leakage flag set if rank ≤ 5
+- [ ] Temporal feature SHAP ranks reported; `interval_weeks` leakage flag set if rank ≤ 5
 - [ ] PR-AUC reported per class for all models

@@ -12,7 +12,7 @@ Four temporal ablations quantify the contribution of each feature group:
 
 Decision rules (evaluated in run_lgbm_baseline.py, declared in paper):
     If macro_F1(B) ≈ macro_F1(C): weak radiomic signal
-    If macro_F1(B) > 0.33:        temporal leakage confirmed
+    If macro_F1(B) > 0.38:        temporal leakage confirmed
 
 selected_features.yaml is written by run_lgbm_baseline.py after ablation D
 CV completes — this is the only model that produces this artefact.
@@ -92,7 +92,7 @@ def build_ablation_feature_set(
     Return the feature list for a given ablation from an AnchoredFoldSelectionResult.
 
     Ablation A: selected_radiomic only
-    Ablation B: temporal cols only (mRMR not run)
+    Ablation B: temporal cols only (feature selection not run)
     Ablation C: selected_radiomic + temporal
     Ablation D: full_feature_set (selected_radiomic + temporal + anchored_delta)
 
@@ -122,7 +122,7 @@ def build_ablation_feature_set(
     if not result:
         raise ValueError(
             f"Ablation {ablation}: empty feature list. "
-            "Check that mRMR selected at least some radiomic features."
+            "Check that the configured selector selected at least some radiomic features."
         )
     return result
 

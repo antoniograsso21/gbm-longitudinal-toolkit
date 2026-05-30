@@ -93,10 +93,7 @@ from src.models.lgbm_baseline import (
 from src.training.cross_validation import CVSplits, build_cv_splits
 from src.training.feature_selector import (
     AnchoredFoldSelectionResult,
-    BOOTSTRAP_REPLICATES_FAST,
     FoldSelectionResult,
-    MRMR_N_SELECT_FAST,
-    STABILITY_THRESHOLD_FAST,
     aggregate_fold_selections,
 )
 from src.training.training_utils import select_features_fold_anchored_cached
@@ -446,9 +443,8 @@ def main(fast: bool = False, ablations: list[AblationType] | None = None, verbos
     print_section("T3.3 — LightGBM Baseline (Ablations A/B/C/D)")
     if fast:
         print(
-            f"  ⚠️  FAST MODE — "
-            f"B={BOOTSTRAP_REPLICATES_FAST} | n_select={MRMR_N_SELECT_FAST} | "
-            f"tau={STABILITY_THRESHOLD_FAST}. Smoke test only, not production."
+            "  ⚠️  FAST MODE — "
+            "reduced selector/search workload. Smoke test only, not production."
         )
 
     if ablations is None:
@@ -610,14 +606,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print top-50 features by bootstrap stability per fold (tau calibration).",
+        help="Print selector diagnostics per fold.",
     )
     parser.add_argument("--fast", action="store_true",
-                        help=(
-                            f"Smoke test mode: B={BOOTSTRAP_REPLICATES_FAST}, "
-                            f"n_select={MRMR_N_SELECT_FAST}, tau={STABILITY_THRESHOLD_FAST}. "
-                            "Never use for production."
-                        ))
+                        help="Smoke test mode: reduced selector/search workload. Never use for production.")
     parser.add_argument("--ablation", choices=["A", "B", "C", "D"], default=None,
                         help="Run a single ablation only (default: all).")
     args = parser.parse_args()

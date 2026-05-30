@@ -99,7 +99,7 @@ Four mandatory ablations (executed in Step 3, reported in paper):
   C) Radiomics + temporal features
   D) Radiomics + temporal + delta features (full model input)
   If B ≈ C: weak radiomic signal — must declare in paper.
-  Additional: interval_weeks SHAP rank in final LightGBM model.
+  Additional: temporal feature SHAP ranks in final LightGBM model.
 
 ### 3. Feature Selection must live inside cross-validation
 Feature selection is executed fold-by-fold inside the training loop — never on
@@ -186,15 +186,15 @@ Step 8 — Paper (bioRxiv preprint)
      Implemented as: anchored_delta = {delta_f : f ∈ selected_radiomic AND delta_f passes variance}.
    - Feature set per model:
      LR: selected_radiomic only (cross-sectional, excludes nadir features)
-     LightGBM/LSTM/GNN: selected_radiomic + temporal (3) + anchored_delta
-   - Stability threshold \( \tau \) is calibrated empirically.
-     Practical guidance: tau=0.7 (Meinshausen & Bühlmann) typically requires n>>200 per fold;
-     LUMIERE has n≈185 per fold.
-     **Current implementation default**: `STABILITY_THRESHOLD = 0.4` in `src/training/feature_selector.py`.
-     If you want a more conservative selection, run with tau=0.5–0.6 and compare fold-level
-     `n_radiomic_selected` and downstream metrics (document the chosen value in Methods).
-   - Stability measured across bootstrap replicates (within fold) only.
-     Cross-fold aggregation via majority vote (≥3/5 folds) for YAML.
+     LightGBM/LSTM/GNN: selected_radiomic + temporal (3) +
+     continuous nadir features (CE_vs_nadir, weeks_since_nadir) +
+     anchored_delta + delta-derived features
+   - MI production parameters are `percentile` and `n_neighbors`
+     (`configs/feature_selector.yaml`: percentile=5.0, n_neighbors=5).
+   - mRMR stability parameters (`B`, `n_select`, `tau`, `k_mi`) remain available only
+     in the reference path, not the active LUMIERE production path.
+   - Cross-fold aggregation via majority vote (≥3/5 folds) for YAML.
+     For MI, this means present in the fold-level radiomic top-percentile selection.
    - selected_features.yaml produced exclusively by LightGBM ablation D:
      contains radiomic-only selected features (majority vote across folds).
      Consumed by Step 4 GraphConfig.node_feature_cols.
@@ -219,6 +219,27 @@ Step 8 — Paper (bioRxiv preprint)
     The pipeline architecture and reproducibility are the primary contributions.
 15. Generalisation deferred to Step 7: pipeline is LUMIERE-specific in V1.
 
+### Step 3 Baseline Results Snapshot (2026-05-02)
+- LightGBM A (radiomic-only) is the strongest macro-F1 baseline in the current run
+  (0.4045 ± 0.0459), so radiomic signal is present but modest.
+- LightGBM B (temporal-only) is close to, but below, the predeclared macro-F1 leakage
+  threshold (0.3725 vs 0.38) and has the strongest PR-AUC Response
+  (0.3309 ± 0.1560), so scheduling/history effects remain an important confounder
+  to discuss.
+- LightGBM D SHAP is dominated by CE/NC radiomic features. `interval_weeks` is absent
+  from the top-20 SHAP table; `time_from_diagnosis_weeks` appears at rank 12.
+- Combined evidence argues against strong scheduling leakage as the full-model mechanism:
+  temporal-only B is close to but below the macro-F1 leakage threshold, while
+  `interval_weeks` is outside the SHAP top 20 in D. Still discuss scheduling/history
+  confounding explicitly.
+- `selected_features.yaml` is CE-heavy and biologically plausible for RANO, but shape
+  features are cross-sequence redundant by construction. Report nominal selected
+  features separately from unique compartment/family-level patterns in the paper.
+- Delta anchoring does not materially improve over radiomic+temporal features in this run.
+- LSTM does not clearly beat LightGBM under the short mean sequence length (~3.6 timepoints).
+- Step 4 should be treated as exploratory and compared against LightGBM A, B, and D;
+  beating logistic regression alone is not enough.
+
 ---
 
 ## Feature selection cache (operational note)
@@ -229,8 +250,10 @@ Feature selection is expensive (especially the reference mRMR+stability path). A
 - Cache keying: **content + parameters**, not just fold index.
   The cache filename encodes:
   - a data fingerprint of `(X_train, y_train)` for that fold, and
-  - a parameter fingerprint (fold, B, n_select, tau, k_mi, seed, fast, variance_threshold).
-- Consequence: changing `tau` (or other parameters) automatically changes the cache key.
+  - a parameter fingerprint:
+    MI path: method, fold, percentile, n_neighbors, seed, fast, variance_threshold;
+    mRMR path: method, fold, B, n_select, tau, k_mi, seed, fast, variance_threshold.
+- Consequence: changing selector parameters automatically changes the cache key.
   You should delete the cache directory only if you want to force recomputation despite an
   apparent cache hit (e.g., after code changes that alter behavior without changing the key).
 

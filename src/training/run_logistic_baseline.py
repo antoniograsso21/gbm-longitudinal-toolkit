@@ -4,7 +4,7 @@ src/training/run_logistic_baseline.py
 Entry point for the Logistic Regression baseline (Step 3 — T3.2).
 
 Reads dataset_engineered.parquet, runs StratifiedGroupKFold CV with
-feature selection (mRMR + Stability Selection) inside each fold,
+feature selection (configured selector; production path: MI univariate) inside each fold,
 logs results to MLflow.
 
 Feature selection runs fold-by-fold on the training split only —
@@ -47,17 +47,7 @@ import yaml
 
 from src.models.logistic_baseline import train_lr_fold
 from src.training.cross_validation import build_cv_splits
-from src.training.feature_selector import (
-    SelectionResult,
-    BOOTSTRAP_REPLICATES,
-    BOOTSTRAP_REPLICATES_FAST,
-    FoldSelectionResult,
-    MRMR_N_SELECT,
-    MRMR_N_SELECT_FAST,
-    STABILITY_THRESHOLD,
-    STABILITY_THRESHOLD_FAST,
-    aggregate_fold_selections,
-)
+from src.training.feature_selector import SelectionResult
 from src.training.training_utils import select_features_fold_anchored_cached
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import build_run_info, fit_transform_fold, load_random_config
@@ -129,9 +119,8 @@ def main(fast: bool = False, verbose: bool = False) -> None:
     print_section("T3.2 — Logistic Regression Baseline")
     if fast:
         print(
-            f"  ⚠️  FAST MODE — "
-            f"B={BOOTSTRAP_REPLICATES_FAST} | n_select={MRMR_N_SELECT_FAST} | "
-            f"tau={STABILITY_THRESHOLD_FAST}. Smoke test only, not production."
+            "  ⚠️  FAST MODE — "
+            "reduced selector/search workload. Smoke test only, not production."
         )
 
     seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
@@ -302,16 +291,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Print top-50 features by bootstrap stability per fold (tau calibration).",
+        help="Print selector diagnostics per fold.",
     )
     parser.add_argument(
         "--fast",
         action="store_true",
-        help=(
-            f"Smoke test mode: B={BOOTSTRAP_REPLICATES_FAST}, "
-            f"n_select={MRMR_N_SELECT_FAST}, tau={STABILITY_THRESHOLD_FAST}. "
-            "Never use for production."
-        ),
+        help="Smoke test mode: reduced selector/search workload. Never use for production.",
     )
     args = parser.parse_args()
     main(fast=args.fast, verbose=args.verbose)

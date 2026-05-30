@@ -4,7 +4,8 @@ src/training/run_lstm_baseline.py
 Entry point for the LSTM baseline (Step 3 — T3.4).
 
 Reads dataset_engineered.parquet, runs StratifiedGroupKFold CV with
-feature selection (mRMR + Stability Selection) inside each fold,
+feature selection (configured selector; production path: MI univariate)
+inside each fold,
 identical pattern to run_lgbm_baseline.py ablation D.
 
 LSTM operates at patient level: each patient's paired examples become
@@ -53,12 +54,7 @@ from src.models.lstm_baseline import (
     train_lstm_fold,
 )
 from src.training.cross_validation import build_cv_splits
-from src.training.feature_selector import (
-    AnchoredFoldSelectionResult,
-    BOOTSTRAP_REPLICATES_FAST,
-    MRMR_N_SELECT_FAST,
-    STABILITY_THRESHOLD_FAST,
-)
+from src.training.feature_selector import AnchoredFoldSelectionResult
 from src.training.metrics import AggregatedMetrics, FoldMetrics, aggregate_cv_results
 from src.training.training_utils import (
     build_run_info,
@@ -226,9 +222,8 @@ def main(fast: bool = False, verbose: bool = False) -> None:
     print_section("T3.4 — LSTM Baseline")
     if fast:
         print(
-            f"  ⚠️  FAST MODE — "
-            f"B={BOOTSTRAP_REPLICATES_FAST} | n_select={MRMR_N_SELECT_FAST} | "
-            f"tau={STABILITY_THRESHOLD_FAST}. Smoke test only."
+            "  ⚠️  FAST MODE — "
+            "reduced selector/search workload. Smoke test only."
         )
 
     seed, n_jobs = load_random_config(RANDOM_STATE_PATH)
@@ -442,8 +437,8 @@ def main(fast: bool = False, verbose: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LSTM baseline (T3.4)")
     parser.add_argument("--fast", action="store_true",
-                        help="Smoke test mode — reduced bootstrap and grid.")
+                        help="Smoke test mode — reduced selector/search workload and grid.")
     parser.add_argument("--verbose", action="store_true",
-                        help="Print top-50 features by bootstrap stability per fold.")
+                        help="Print selector diagnostics per fold.")
     args = parser.parse_args()
     main(fast=args.fast, verbose=args.verbose)

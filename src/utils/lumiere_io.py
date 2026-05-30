@@ -387,10 +387,10 @@ def build_full_feature_set(df: "pd.DataFrame") -> list[str]:
         Patient, Timepoint          — identifiers
         target, target_encoded      — target
         is_baseline_scan            — boolean flag
-        is_nadir_scan               — boolean flag (incompatible with Kraskov MI)
+        is_nadir_scan               — boolean flag (excluded from continuous selectors)
 
     Used by all run_*.py entry points to build the consistent feature pool
-    passed to mRMR + Stability Selection. Centralised here (DRY) to prevent
+    passed to the configured feature selector. Centralised here (DRY) to prevent
     divergence across LR, LightGBM, and LSTM entry points.
 
     Args:
