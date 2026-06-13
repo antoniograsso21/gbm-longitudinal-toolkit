@@ -240,6 +240,22 @@ Step 8 — Paper (bioRxiv preprint)
 - Step 4 should be treated as exploratory and compared against LightGBM A, B, and D;
   beating logistic regression alone is not enough.
 
+### Step 4 Graph/GNN Status Snapshot (2026-05-30)
+- Primary 3-node DeepBraTumIA graphs have been built and validated:
+  231 graph timepoints across 64 patients, saved under `data/processed/graphs/3node/`.
+  `graphs_validator_report_3node.json` has 8 PASS, 0 FAIL, 1 expected WARN for missing A6.
+- The GNN stack is implemented (`graph_builder.py`, `gnn.py`, `temporal_attention.py`,
+  `tumor_gnn.py`, `run_gnn.py`) and a fast full/3node smoke run completed successfully,
+  producing `data/processed/gnn/gnn_full_3node_results.json`.
+- Current selected features are CE/NC-heavy; ED has no majority-vote radiomic/delta
+  features. The 3-node GNN therefore retains the edema node topologically, but the ED
+  feature channel is weak and must be declared when interpreting graph-structure results.
+- A3 no-delta and A6 2-node HD-GLIO are intentionally deferred. A3 needs a clean no-delta
+  graph/collation path; A6 needs HD-GLIO-AUTO preprocessing/feature engineering with
+  `NE_*` columns. Do not create a scalar-only pseudo-NE node from the DeepBraTumIA parquet.
+- Next Step 4 work: add minimal graph/collation/forward tests, then run full 5-fold
+  GNN for full, A1, and A4 and compare directly against LightGBM A, B, D, and LSTM.
+
 ---
 
 ## Feature selection cache (operational note)

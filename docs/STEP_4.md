@@ -158,6 +158,38 @@ Known constraints:
 - A3 and A6 are intentionally blocked rather than silently producing invalid ablations.
 - GNN must be compared against LightGBM A, B, and D from Step 3; beating LR alone is insufficient.
 
+## Next Planned Work
+
+Immediate next steps:
+1. Add minimal tests for graph loading, GNN collation, and `TumorTemporalGNN.forward`.
+2. Run the full 5-fold GNN jobs:
+   ```bash
+   uv run python -m src.training.run_gnn
+   uv run python -m src.training.run_gnn --ablation A1
+   uv run python -m src.training.run_gnn --ablation A4
+   ```
+3. Add GNN rows to the Step 3/Step 4 comparison table and compare against
+   LightGBM A, LightGBM B, LightGBM D, and LSTM.
+
+Deferred work:
+- A3 no-delta requires an explicit no-delta graph/feature-collation path.
+- A6 requires HD-GLIO-AUTO preprocessing + feature engineering to produce an
+  engineered parquet with `NE_*` columns.
+- Mini-batch training and YAML grid search can be added after the correctness pass;
+  on n=231 they are lower priority than leakage-safe evaluation.
+
+Feature-selection note:
+- The current MI-univariate selector is the production path because mRMR ranking
+  consistency was poor on LUMIERE and selected too few/unstable features.
+- This is scientifically defensible for this small-n setting if reported honestly:
+  MI is a simple relevance filter, run inside CV, with delta anchoring to control
+  dimensionality. It does not remove redundancy, so shape-feature duplicates and
+  CE-heavy selection must be interpreted at the compartment/family level rather than
+  as 40 independent biological signals.
+- For Step 4, the consequence is important: ED has no selected radiomic/delta
+  features in the current majority-vote set, so any 3-node GNN result tests the
+  topology with a weak ED feature channel, not a fully informative edema node.
+
 ---
 
 ## Definition of Done
