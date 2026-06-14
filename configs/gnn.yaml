@@ -2,24 +2,45 @@
 # Hyperparameters for TumorTemporalGNN (Step 4).
 # All values read by run_gnn.py — nothing hardcoded in src/.
 #
-# Grid search runs for each fold:
-#   hidden × heads × dropout × learning_rate
-# Reduced grid compared to LightGBM: on n=231 deep architecture search
-# risks overfit. Prefer the smallest architecture that matches LightGBM.
+# A small within-fold validation search is used before full GNN runs.
+# Reduced grid compared to LightGBM: on n=231 deep architecture search risks
+# overfit. Prefer the smallest architecture that matches LightGBM.
 #
 # Ablation flags are set via CLI --ablation, not here.
 
-# GATv2Conv + TemporalAttention hyperparameters
-hidden: [32, 64]              # output channels per head in GATv2Conv
-heads: [1, 2]                 # attention heads per GATv2Conv layer
+# GATv2Conv + TemporalAttention default hyperparameters.
+# The first search_configs entry matches these defaults and is used in --fast mode.
+hidden: 32                    # output channels per head in GATv2Conv
+heads: 1                      # attention heads per GATv2Conv layer
 n_gnn_layers: 1               # 1 = default; 2 = only if A1 ablation confirms gain
 n_temporal_heads: 1           # multi-head temporal attention heads
-dropout: [0.2, 0.3]           # shared dropout (GNN + temporal attention)
+dropout: 0.2                  # shared dropout (GNN + temporal attention)
 edge_dim: 2                   # [volumetric_ratio, interval_weeks] — fixed
 
 # Optimiser
-learning_rate: [1.0e-3, 5.0e-4]
+learning_rate: 1.0e-3
 weight_decay: 1.0e-4          # AdamW regularisation
+
+# Within-fold validation search candidates.
+# In every CV fold, run_gnn.py selects the candidate with lowest validation loss,
+# then evaluates that single selected model on the held-out test fold.
+search_configs:
+  - hidden: 32
+    heads: 1
+    dropout: 0.2
+    learning_rate: 1.0e-3
+  - hidden: 32
+    heads: 1
+    dropout: 0.3
+    learning_rate: 5.0e-4
+  - hidden: 64
+    heads: 1
+    dropout: 0.3
+    learning_rate: 1.0e-3
+  - hidden: 32
+    heads: 2
+    dropout: 0.2
+    learning_rate: 5.0e-4
 
 # Training loop
 batch_size: 8                 # patient sequences per mini-batch

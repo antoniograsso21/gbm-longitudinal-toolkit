@@ -44,7 +44,7 @@ import argparse
 import json
 import math
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -115,9 +115,13 @@ class GNNFoldResult:
     n_train_patients: int
     n_test_patients: int
     n_features: int
+    best_config_index: int
+    n_search_configs: int
     best_hidden: int
     best_heads: int
+    best_dropout: float
     best_lr: float
+    best_val_loss: float
     n_epochs_trained: int
 
 
@@ -127,6 +131,53 @@ class GNNFoldResult:
 def _load_gnn_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
+
+
+def _build_search_configs(
+    cfg_raw: dict,
+    ablation_flags: dict[str, bool],
+    fast: bool,
+) -> list[GNNConfig]:
+    """
+    Build the explicit within-fold validation search configs.
+
+    In fast mode, only the first candidate is used to keep smoke tests short.
+    """
+    raw_candidates = cfg_raw.get("search_configs")
+    if not raw_candidates:
+        raw_candidates = [{
+            "hidden": _first_grid_value(cfg_raw, "hidden", 32),
+            "heads": _first_grid_value(cfg_raw, "heads", 1),
+            "dropout": _first_grid_value(cfg_raw, "dropout", 0.2),
+            "learning_rate": _first_grid_value(cfg_raw, "learning_rate", 1e-3),
+        }]
+
+    if fast:
+        raw_candidates = raw_candidates[:1]
+
+    configs: list[GNNConfig] = []
+    for raw in raw_candidates:
+        configs.append(GNNConfig(
+            in_channels=0,  # resolved after collation
+            hidden=int(raw.get("hidden", cfg_raw.get("hidden", 32))),
+            heads=int(raw.get("heads", cfg_raw.get("heads", 1))),
+            n_gnn_layers=int(raw.get("n_gnn_layers", cfg_raw.get("n_gnn_layers", 1))),
+            n_temporal_heads=int(raw.get(
+                "n_temporal_heads", cfg_raw.get("n_temporal_heads", 1)
+            )),
+            dropout=float(raw.get("dropout", cfg_raw.get("dropout", 0.2))),
+            edge_dim=int(raw.get("edge_dim", cfg_raw.get("edge_dim", 2))),
+            n_classes=int(raw.get("n_classes", cfg_raw.get("n_classes", 3))),
+            learning_rate=float(raw.get(
+                "learning_rate", cfg_raw.get("learning_rate", 1e-3)
+            )),
+            weight_decay=float(raw.get("weight_decay", cfg_raw.get("weight_decay", 1e-4))),
+            grad_clip_norm=float(raw.get(
+                "grad_clip_norm", cfg_raw.get("grad_clip_norm", 1.0)
+            )),
+            **ablation_flags,
+        ))
+    return configs
 
 
 # ---------------------------------------------------------------------------
@@ -295,69 +346,31 @@ def _compute_class_weights(y: np.ndarray, n_classes: int = 3) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Training loop (pure — returns result)
+# Training loop helpers (pure — no logging or file I/O)
 # ---------------------------------------------------------------------------
-def _train_fold(
-    train_sequences: list[PatientGraphSequence],
-    val_sequences: list[PatientGraphSequence],
-    test_sequences: list[PatientGraphSequence],
-    feature_cols: list[str],
-    all_feature_cols: list[str],
-    X_train_scaled: np.ndarray,
-    X_val_scaled: np.ndarray,
-    X_test_scaled: np.ndarray,
-    train_patient_row_map: dict[str, list[int]],
-    val_patient_row_map: dict[str, list[int]],
-    test_patient_row_map: dict[str, list[int]],
-    fold: int,
-    ablation: str,
+def _fit_candidate(
+    model: TumorTemporalGNN,
+    train_batch: tuple[torch.Tensor, ...],
+    val_batch: tuple[torch.Tensor, ...],
+    criterion: nn.Module,
     gnn_cfg: GNNConfig,
     max_epochs: int,
     patience: int,
-    batch_size: int,
-    seed: int,
-    device: torch.device,
-) -> GNNFoldResult:
-    """Train TumorTemporalGNN on one CV fold with early stopping on val loss."""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-    topology: TopologyType = train_sequences[0].topology
-
-    # Collate batches
-    train_batch = collate_patient_sequences(
-        train_sequences, feature_cols, all_feature_cols,
-        X_train_scaled, train_patient_row_map, device,
-    )
-    val_batch = collate_patient_sequences(
-        val_sequences, feature_cols, all_feature_cols,
-        X_val_scaled, val_patient_row_map, device,
-    )
-    test_batch = collate_patient_sequences(
-        test_sequences, feature_cols, all_feature_cols,
-        X_test_scaled, test_patient_row_map, device,
-    )
-
-    # Update in_channels from actual data
-    gnn_cfg = GNNConfig(
-        **{**asdict(gnn_cfg), "in_channels": train_batch[0].shape[-1]}
-    )
-    model = TumorTemporalGNN(gnn_cfg).to(device)
-
-    y_train_np = train_batch[5].cpu().numpy()
-    class_weights = _compute_class_weights(y_train_np).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
-
+) -> tuple[dict[str, torch.Tensor], float, int]:
+    """Fit one GNN candidate and return best state, best validation loss, epochs."""
     optimiser = torch.optim.AdamW(
         model.parameters(),
         lr=gnn_cfg.learning_rate,
         weight_decay=gnn_cfg.weight_decay,
     )
-    scheduler = ReduceLROnPlateau(optimiser, mode="min", patience=patience // 4, factor=0.5)
-
+    scheduler = ReduceLROnPlateau(
+        optimiser,
+        mode="min",
+        patience=max(1, patience // 4),
+        factor=0.5,
+    )
     best_val_loss = float("inf")
-    best_state = None
+    best_state: dict[str, torch.Tensor] | None = None
     epochs_no_improve = 0
     n_epochs_trained = 0
 
@@ -390,10 +403,17 @@ def _train_fold(
             if epochs_no_improve >= patience:
                 break
 
-    if best_state is not None:
-        model.load_state_dict(best_state)
+    if best_state is None:
+        best_state = {k: v.clone() for k, v in model.state_dict().items()}
+    return best_state, best_val_loss, n_epochs_trained
 
-    # Evaluate on test fold
+
+def _evaluate_model(
+    model: TumorTemporalGNN,
+    test_batch: tuple[torch.Tensor, ...],
+    fold: int,
+) -> FoldMetrics:
+    """Evaluate one selected model on the held-out test fold."""
     model.eval()
     with torch.no_grad():
         x_seq_t, ei_t, ea_t, iv_t, sl_t, lt_t = test_batch
@@ -402,12 +422,100 @@ def _train_fold(
         y_proba = torch.softmax(test_logits, dim=-1).cpu().numpy()
         y_true = lt_t.cpu().numpy()
 
-    fold_metrics = compute_metrics(
+    return compute_metrics(
         fold=fold,
         y_true=y_true,
         y_pred=y_pred,
         y_proba=y_proba,
     )
+
+
+def _train_fold(
+    train_sequences: list[PatientGraphSequence],
+    val_sequences: list[PatientGraphSequence],
+    test_sequences: list[PatientGraphSequence],
+    feature_cols: list[str],
+    all_feature_cols: list[str],
+    X_train_scaled: np.ndarray,
+    X_val_scaled: np.ndarray,
+    X_test_scaled: np.ndarray,
+    train_patient_row_map: dict[str, list[int]],
+    val_patient_row_map: dict[str, list[int]],
+    test_patient_row_map: dict[str, list[int]],
+    fold: int,
+    ablation: str,
+    search_configs: list[GNNConfig],
+    max_epochs: int,
+    patience: int,
+    batch_size: int,
+    seed: int,
+    device: torch.device,
+) -> GNNFoldResult:
+    """
+    Train a fold-level mini grid, select by validation loss, evaluate once on test.
+    """
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    _ = batch_size  # Whole-fold tensors are used in V1; retained for config traceability.
+    topology: TopologyType = train_sequences[0].topology
+
+    train_batch = collate_patient_sequences(
+        train_sequences, feature_cols, all_feature_cols,
+        X_train_scaled, train_patient_row_map, device,
+    )
+    val_batch = collate_patient_sequences(
+        val_sequences, feature_cols, all_feature_cols,
+        X_val_scaled, val_patient_row_map, device,
+    )
+    test_batch = collate_patient_sequences(
+        test_sequences, feature_cols, all_feature_cols,
+        X_test_scaled, test_patient_row_map, device,
+    )
+
+    y_train_np = train_batch[5].cpu().numpy()
+    class_weights = _compute_class_weights(y_train_np).to(device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    in_channels = int(train_batch[0].shape[-1])
+    selected_state: dict[str, torch.Tensor] | None = None
+    selected_cfg: GNNConfig | None = None
+    selected_idx = -1
+    selected_epochs = 0
+    selected_val_loss = float("inf")
+
+    for config_idx, raw_cfg in enumerate(search_configs):
+        candidate_seed = seed + fold * 100 + config_idx
+        torch.manual_seed(candidate_seed)
+        np.random.seed(candidate_seed)
+        random.seed(candidate_seed)
+
+        gnn_cfg = replace(raw_cfg, in_channels=in_channels)
+        model = TumorTemporalGNN(gnn_cfg).to(device)
+        state, val_loss, n_epochs = _fit_candidate(
+            model=model,
+            train_batch=train_batch,
+            val_batch=val_batch,
+            criterion=criterion,
+            gnn_cfg=gnn_cfg,
+            max_epochs=max_epochs,
+            patience=patience,
+        )
+
+        if val_loss < selected_val_loss:
+            selected_state = state
+            selected_cfg = gnn_cfg
+            selected_idx = config_idx
+            selected_epochs = n_epochs
+            selected_val_loss = val_loss
+
+    if selected_state is None or selected_cfg is None:
+        raise RuntimeError(f"Fold {fold}: no GNN search candidate completed.")
+
+    selected_model = TumorTemporalGNN(selected_cfg).to(device)
+    selected_model.load_state_dict(selected_state)
+    fold_metrics = _evaluate_model(selected_model, test_batch, fold=fold)
 
     return GNNFoldResult(
         fold=fold,
@@ -417,10 +525,14 @@ def _train_fold(
         n_train_patients=len(train_sequences),
         n_test_patients=len(test_sequences),
         n_features=train_batch[0].shape[-1],
-        best_hidden=gnn_cfg.hidden,
-        best_heads=gnn_cfg.heads,
-        best_lr=gnn_cfg.learning_rate,
-        n_epochs_trained=n_epochs_trained,
+        best_config_index=selected_idx,
+        n_search_configs=len(search_configs),
+        best_hidden=selected_cfg.hidden,
+        best_heads=selected_cfg.heads,
+        best_dropout=selected_cfg.dropout,
+        best_lr=selected_cfg.learning_rate,
+        best_val_loss=selected_val_loss,
+        n_epochs_trained=selected_epochs,
     )
 
 
@@ -525,6 +637,8 @@ def main(
     max_epochs = 10 if fast else cfg_raw.get("max_epochs", 200)
     patience = 5  if fast else cfg_raw.get("patience", 20)
     batch_size = cfg_raw.get("batch_size", 8)
+    search_configs = _build_search_configs(cfg_raw, ablation_flags, fast=fast)
+    print(f"  GNN search configs: {len(search_configs)}")
 
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
     fold_metrics_list: list[FoldMetrics] = []
@@ -606,22 +720,6 @@ def main(
                 f"val: {len(val_seqs)} | test: {len(test_seqs)}"
             )
 
-            # Build GNNConfig (in_channels resolved inside _train_fold)
-            gnn_cfg = GNNConfig(
-                in_channels=0,  # placeholder, resolved in collation
-                hidden=_first_grid_value(cfg_raw, "hidden", 32),
-                heads=_first_grid_value(cfg_raw, "heads", 1),
-                n_gnn_layers=cfg_raw.get("n_gnn_layers", 1),
-                n_temporal_heads=cfg_raw.get("n_temporal_heads", 1),
-                dropout=_first_grid_value(cfg_raw, "dropout", 0.2),
-                edge_dim=cfg_raw.get("edge_dim", 2),
-                n_classes=cfg_raw.get("n_classes", 3),
-                learning_rate=_first_grid_value(cfg_raw, "learning_rate", 1e-3),
-                weight_decay=cfg_raw.get("weight_decay", 1e-4),
-                grad_clip_norm=cfg_raw.get("grad_clip_norm", 1.0),
-                **ablation_flags,
-            )
-
             result = _train_fold(
                 train_sequences=train_seqs,
                 val_sequences=val_seqs if val_seqs else test_seqs,
@@ -636,7 +734,7 @@ def main(
                 test_patient_row_map=test_row_map,
                 fold=fold_split.fold,
                 ablation=ablation,
-                gnn_cfg=gnn_cfg,
+                search_configs=search_configs,
                 max_epochs=max_epochs,
                 patience=patience,
                 batch_size=batch_size,
@@ -648,10 +746,14 @@ def main(
                 f"  Fold {fold_split.fold}: "
                 f"macro_f1={result.metrics.macro_f1:.4f} | "
                 f"mcc={result.metrics.mcc:.4f} | "
+                f"best_config={result.best_config_index} | "
+                f"val_loss={result.best_val_loss:.4f} | "
                 f"epochs={result.n_epochs_trained}"
             )
 
             _log_fold_metrics(result.metrics, ablation)
+            mlflow.log_metric(f"{ablation}_fold_{fold_split.fold}_best_val_loss", result.best_val_loss)
+            mlflow.log_param(f"{ablation}_fold_{fold_split.fold}_best_config_index", result.best_config_index)
             fold_metrics_list.append(result.metrics)
             fold_results_raw.append(asdict(result))
 
@@ -668,6 +770,7 @@ def main(
                 "topology": topology,
                 "seed": seed,
                 "run_info": run_info,
+                "search_configs": [asdict(c) for c in search_configs],
                 "fold_results": fold_results_raw,
                 "aggregated": asdict(aggregated),
             }
