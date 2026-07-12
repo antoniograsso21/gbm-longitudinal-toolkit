@@ -5,6 +5,17 @@ Do not move anything to the active backlog until V1 is complete.
 
 ---
 
+## 0. Deferred V1 Steps (Next Priorities)
+
+The following steps were originally planned for V1 but have been deferred to focus on the core longitudinal pipeline (Steps 0-4).
+
+- **Step 5: Interpretability (GNN/LSTM)**: Integrated Gradients for GNN, attention weight profiles, and clinical summary generation.
+- **Step 6: Uncertainty Quantification**: Conformal Prediction (RAPS score) to provide calibrated confidence sets.
+- **Step 7: Generalisation & Framework**: Refining the CLI, DVC integration, and creating a general-purpose toolkit tutorial.
+- **Step 8: Paper**: BioRxiv preprint preparation.
+
+---
+
 ## 1. Direct Use of Raw MRI Volumes
 
 **Current approach**: radiomic features pre-extracted via PyRadiomics (CSV).

@@ -52,32 +52,26 @@ Figshare source under the non-commercial license and place them under
 
 ## Pipeline at a glance
 
-The end-to-end pipeline is split into documented steps (`docs/STEP_*.md`):
+The end-to-end pipeline is split into documented steps (`docs/STEP_*.md`). Steps 0-4 are implemented; steps 5-8 are deferred to future development (see `FUTURE.md` for details).
 
+**Implemented Steps (V1 Scope)**
 - **Step 0 – Audit**: structural checks on all raw CSVs, dataset_stats.json.
-- **Step 1 – Preprocessing + Validation**:  
-  build `dataset_paired.parquet` (231×2576, 1 row = (patient, timepoint)),  
+- **Step 1 – Preprocessing + Validation**:
+  build `dataset_paired.parquet` (231×2576, 1 row = (patient, timepoint)),
   run strict validation (n_effective, leakage checks, NaN/inf, monotonic time).
-- **Step 2 – Feature Engineering**:  
-  9 label-free derived features added → `dataset_engineered.parquet` (231×2585).  
-  Cross-compartment ratios (CE_NC_ratio, ED_CE_ratio, CE_fraction, total_tumor_volume),  
-  nadir-based features (CE_vs_nadir, weeks_since_nadir, is_nadir_scan),  
-  delta of derived features (delta_CE_NC_ratio, delta_CE_vs_nadir).  
-  EDA: correlation maps, shape consistency check, delta distributions,  
+- **Step 2 – Feature Engineering**:
+  9 label-free derived features added → `dataset_engineered.parquet` (231×2585).
+  Cross-compartment ratios (CE_NC_ratio, ED_CE_ratio, CE_fraction, total_tumor_volume),
+  nadir-based features (CE_vs_nadir, weeks_since_nadir, is_nadir_scan),
+  delta of derived features (delta_CE_NC_ratio, delta_CE_vs_nadir).
+  EDA: correlation maps, shape consistency check, delta distributions,
   temporal distributions, UMAP (visualisation only), temporal autocorrelation.
-- **Step 3 – Baseline models**:  
+- **Step 3 – Baseline models**:
   StratifiedGroupKFold, **feature selection inside CV** (mRMR + Stability Selection),
   LR, LightGBM+SHAP, LSTM, temporal-feature ablations to quantify leakage.
-- **Step 4 – Graphs + Temporal GNN**:  
-  3-node tumor graphs (NC ↔ CE ↔ ED), GATv2Conv + temporal attention,  
+- **Step 4 – Graphs + Temporal GNN**:
+  3-node tumor graphs (NC ↔ CE ↔ ED), GATv2Conv + temporal attention,
   2-node vs 3-node ablations (HD-GLIO-AUTO vs DeepBraTumIA).
-- **Step 5 – Interpretability**:  
-  SHAP, attention weights, Integrated Gradients, clinical summaries.
-- **Step 6 – Uncertainty**:  
-  Conformal Prediction (RAPS), coverage and set-size analysis.
-- **Step 7 – Framework**:  
-  configs, CLI entry points, DVC pipeline, new-dataset tutorial.
-- **Step 8 – Paper**: bioRxiv preprint and journal submission.
 
 The high-level design and scientific assumptions are captured in `CONTEXT.md`.
 
@@ -107,7 +101,8 @@ gbm-longitudinal-toolkit/
 │   ├── interpretability/      # SHAP, attention, Integrated Gradients, clinical_summary.py
 │   └── uncertainty/           # conformal prediction utilities
 ├── configs/                   # YAML configs (models, graphs, conformal, features_builder.yaml)
-├── docs/                      # STEP_0.md … STEP_8.md
+├── docs/                      # STEP_0.md … STEP_4.md (V1 Scope)
+├── docs/future/               # STEP_5.md … STEP_8.md (Deferred)
 ├── experiments/               # optional MLflow runs
 ├── notebooks/                 # exploratory analyses (not production)
 ├── CONTEXT.md                 # project context and constraints

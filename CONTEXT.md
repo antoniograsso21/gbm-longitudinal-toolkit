@@ -12,10 +12,12 @@ Each step has a dedicated plan file with operational detail:
 - `docs/STEP_2.md` — Feature Engineering
 - `docs/STEP_3.md` — Baseline Models
 - `docs/STEP_4.md` — Graph Construction + GNN
-- `docs/STEP_5.md` — Interpretability
-- `docs/STEP_6.md` — Uncertainty Quantification
-- `docs/STEP_7.md` — Framework
-- `docs/STEP_8.md` — Paper
+
+The following steps are deferred to future developments:
+- `docs/future/STEP_5.md` — Interpretability
+- `docs/future/STEP_6.md` — Uncertainty Quantification
+- `docs/future/STEP_7.md` — Framework
+- `docs/future/STEP_8.md` — Paper
 
 This file (CONTEXT.md) is the strategic document. Step files are the tactical ones.
 
@@ -372,6 +374,8 @@ gbm-longitudinal-toolkit/
 - Step 2 — Feature Engineering ✅
 - Step 3 — Baseline Models ✅
 - Step 4 — Graph Construction + GNN ✅
+
+**Future Developments (Deferred)**
 - Step 5 — Interpretability
 - Step 6 — Uncertainty Quantification
 - Step 7 — Framework

@@ -156,10 +156,18 @@ The Step 4 GNN pipeline has been fully implemented, validated, and trained acros
 - **Continuous time encoding matters**: Adding sinusoidal $\Delta t$ encoding (0.3280 macro F1) improves over simple ordinal steps (0.3045 macro F1).
 - **Tabular baseline dominance**: While the temporal GNN beats a cross-sectional GNN, it still does not outperform the strong LightGBM baseline (0.3844 to 0.4045 macro F1) or Logistic Regression (0.3619 macro F1), and performs on par with the flat LSTM baseline (0.3347 macro F1). This is expected due to the extremely short mean sequence length (~3.6 timepoints) and the small sample size ($n=231$). It stands as an honest, clinically grounded scientific result.
 
-## Next Planned Work (Step 5 - Interpretability)
-1. Proceed with the development of local interpretability for the GNN using Integrated Gradients via Captum.
-2. Track and visualize attention weights over patient timepoints.
-3. Compare GNN explanations with tabular baseline SHAP global features.
+## Future Work (Deferred Steps)
+
+Steps 5-8 have been deferred. Please refer to `FUTURE.md` for a detailed breakdown of these next priorities:
+
+1. **Step 5 – Interpretability**: Local interpretability for the GNN (Integrated Gradients), attention weights visualization, and comparison with tabular baseline SHAP.
+2. **Step 6 – Uncertainty Quantification**: Implementation of Conformal Prediction (RAPS) for calibrated prediction sets.
+3. **Step 7 – Framework Generalization**: Development of CLI entry points, DVC pipeline refinement, and a new-dataset tutorial.
+4. **Step 8 – Paper**: Preparation of the bioRxiv preprint.
+
+---
+
+## Definition of Done
 
 ---
 
