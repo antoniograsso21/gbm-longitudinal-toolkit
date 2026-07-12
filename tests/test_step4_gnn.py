@@ -96,9 +96,10 @@ class Step4GraphAndGNNTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(x_seq).all())
 
         # ED has no node-specific feature in this test feature set; only shared
-        # global context occupies the tail slots.
-        ed_node_first_feature_slots = x_seq[:, :, 2, :2]
-        self.assertTrue(torch.allclose(ed_node_first_feature_slots, torch.zeros_like(ed_node_first_feature_slots)))
+        # global context occupies the first slots (starting at len(node_vals)=0),
+        # while padding zeros occupy the tail slots.
+        ed_node_tail_slots = x_seq[:, :, 2, 4:]
+        self.assertTrue(torch.allclose(ed_node_tail_slots, torch.zeros_like(ed_node_tail_slots)))
 
     def test_tumor_temporal_gnn_forward_returns_finite_logits(self) -> None:
         feature_cols = [

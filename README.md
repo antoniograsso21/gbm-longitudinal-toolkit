@@ -139,45 +139,51 @@ to be installed via extras or environment files as the implementation matures.
 
 ## Quick start (current status)
 
-The **audit, preprocessing, and feature engineering pipeline (Steps 0–2)** is
-implemented and passing validation.
+The entire end-to-end modeling pipeline (**Steps 0–4**) is fully implemented, validated, and trainable.
 
 1. **Prepare the data**
    - Download LUMIERE CSVs and place them under `data/raw/lumiere/`.
    - See `CONTEXT.md` for the exact file list.
 
-2. **Run audit and preprocessing**
+2. **Run audit, preprocessing, and feature engineering**
 
    ```bash
    uv run -m src.audit.lumiere_audit
    uv run -m src.preprocessing.dataset_builder
-   uv run -m src.validation.dataset_validator
+   uv run -m src.preprocessing.features_builder
    ```
 
-   This produces:
-   - `data/processed/audit/dataset_stats.json`
-   - `data/processed/preprocessing/dataset_paired.parquet`
-   - `data/processed/preprocessing/dataset_builder_report.json`
-   - `data/processed/validation/dataset_validator_report.json`
-
-3. **Run feature engineering**
+3. **Run baselines (Step 3)**
 
    ```bash
-   uv run -m src.preprocessing.features_builder
-   uv run -m src.validation.features_validator
+   # Logistic Regression
+   uv run python -m src.training.run_logistic_baseline
+   
+   # LightGBM (Ablations A-D + SHAP)
+   uv run python -m src.training.run_lgbm_baseline
+   
+   # LSTM
+   uv run python -m src.training.run_lstm_baseline
    ```
 
-   This produces:
-   - `data/processed/preprocessing/dataset_engineered.parquet` (231×2585, +9 derived features)
-   - `data/processed/preprocessing/features_builder_report.json`
-   - `data/processed/validation/features_validator_report.json`
+4. **Run Graph Construction & Temporal GNN (Step 4)**
 
-4. **Explore the design**
-   - Read `CONTEXT.md` for the scientific rationale.
-   - Read `docs/STEP_3.md`–`STEP_6.md` for the planned modelling, GNN, and UQ pipeline.
+   ```bash
+   # Build 3-node tumor graphs
+   uv run python -m src.graphs.graph_builder
+   uv run python -m src.validation.graphs_validator
+   
+   # Train GNN models (with within-fold model selection)
+   uv run python -m src.training.run_gnn              # Full model
+   uv run python -m src.training.run_gnn --ablation A1 # Cross-sectional GNN
+   uv run python -m src.training.run_gnn --ablation A4 # No delta_t encoding
+   ```
 
-As later steps are implemented, the goal is to expose simple CLI entry points
-(`run_baselines`, `run_gnn`, `run_conformal`, `run_explanations`) wired into `dvc.yaml`.
+   This produces cross-validation JSON results under `data/processed/gnn/` and logged MLflow parameters/metrics.
+
+5. **Explore the design**
+   - Read `CONTEXT.md` for the scientific rationale and roadmap.
+   - Read `docs/STEP_3.md` and `docs/STEP_4.md` for detailed results.
 
 ---
 

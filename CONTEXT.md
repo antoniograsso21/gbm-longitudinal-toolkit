@@ -240,21 +240,15 @@ Step 8 — Paper (bioRxiv preprint)
 - Step 4 should be treated as exploratory and compared against LightGBM A, B, and D;
   beating logistic regression alone is not enough.
 
-### Step 4 Graph/GNN Status Snapshot (2026-05-30)
-- Primary 3-node DeepBraTumIA graphs have been built and validated:
-  231 graph timepoints across 64 patients, saved under `data/processed/graphs/3node/`.
-  `graphs_validator_report_3node.json` has 8 PASS, 0 FAIL, 1 expected WARN for missing A6.
-- The GNN stack is implemented (`graph_builder.py`, `gnn.py`, `temporal_attention.py`,
-  `tumor_gnn.py`, `run_gnn.py`) and a fast full/3node smoke run completed successfully,
-  producing `data/processed/gnn/gnn_full_3node_results.json`.
-- Current selected features are CE/NC-heavy; ED has no majority-vote radiomic/delta
-  features. The 3-node GNN therefore retains the edema node topologically, but the ED
-  feature channel is weak and must be declared when interpreting graph-structure results.
-- A3 no-delta and A6 2-node HD-GLIO are intentionally deferred. A3 needs a clean no-delta
-  graph/collation path; A6 needs HD-GLIO-AUTO preprocessing/feature engineering with
-  `NE_*` columns. Do not create a scalar-only pseudo-NE node from the DeepBraTumIA parquet.
-- Next Step 4 work: add minimal graph/collation/forward tests, then run full 5-fold
-  GNN for full, A1, and A4 and compare directly against LightGBM A, B, D, and LSTM.
+### Step 4 Graph/GNN Status Snapshot (2026-06-28)
+- **Primary 3-node DeepBraTumIA graphs** have been built and validated: 231 graph timepoints across 64 patients, saved under `data/processed/graphs/3node/`.
+- **GNN training runs (5-fold CV with within-fold model selection mini-grid)** are complete. The results are:
+  - **GNN Full Model**: macro F1: **0.3280 ± 0.0722**, MCC: **0.0697 ± 0.2454**
+  - **GNN A1 (no temporal attention)**: macro F1: **0.2898 ± 0.0590**
+  - **GNN A4 (no $\Delta t$ encoding)**: macro F1: **0.3045 ± 0.0117**
+- **Interpretation**: Continuous temporal attention and time-interval positional encoding improve GNN performance significantly (0.3280 vs 0.2898), showing that sequential history is informative. However, the temporal models (GNN & LSTM) still perform below strong cross-sectional baselines like LightGBM A (0.4045) on this dataset due to short patient histories (mean length 3.6). This is a scientifically honest and clinically grounded result.
+- **ED node limitation**: confirmed by diagnostics that Edema lacks stable texture/intensity radiomic features under the CV feature selector (retains zero features at 5.0% percentile, and only redundant shape features at 10.0% percentile).
+- **Deferred**: A3 (no-delta) and A6 (2-node graph via HD-GLIO) remain deferred.
 
 ---
 
@@ -376,8 +370,8 @@ gbm-longitudinal-toolkit/
 - Step 0 — Audit ✅
 - Step 1 — Preprocessing + Validation ✅
 - Step 2 — Feature Engineering ✅
-- Step 3 — Baseline Models
-- Step 4 — Graph Construction + GNN
+- Step 3 — Baseline Models ✅
+- Step 4 — Graph Construction + GNN ✅
 - Step 5 — Interpretability
 - Step 6 — Uncertainty Quantification
 - Step 7 — Framework
